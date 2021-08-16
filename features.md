@@ -45,6 +45,8 @@ Storage Feature
 		* Compression of already compressed artifacts
 			- Do we want it to try to compress everything to get as much compression
 			- Do we want to focus more on speed?
+			- Compression check with lz4 or one of the fast algo to verify if it is compressable
+				* If not, do we want to skip compression and go directly to encryption?
 		* At what point is it worth to just eat the space loss cos of deep archive pricing?
 	3. Deduplication
 		* None
@@ -78,6 +80,11 @@ Storage Feature
 	5. Data integrity
 		* Cryptographic hash on the backup metadata
 		* Cryptographic hash on the backup data itself
+		* CRC vs Hashes
+			- crc has burst error detection up to crc size itself
+			- Pick correct size CRC for the data
+			- Can have corruption in the crc/hash so have a few (see gzip/bzip2)
+			- http://users.ece.cmu.edu/~koopman/pubs/faa15_tc-14-49.pdf
 	6. Concurrency
 		* Multiple machine backup
 		* How do we handle it, have a separate repo for each machine?
@@ -150,6 +157,22 @@ Backup features
 				* Number of restores/time taken to do them
 		* Store Metadata/other data into S3
 			- DynamoDB an option?
+	10. Scheduling of backup
+		* Daily backup
+		* Further back it goes the less is retained
+			- After 1 week or more weekly backup is kept
+			- After 1 month or more montly backup is kept
+			- After 1 year or more yearly backup is kept
+	11. Locality of operations
+		* IE could look at ECS/EC2 for validation/integrity checks
+			- Free data transfer could be cheaper
+		* Should also support client-side validation checking
+	12. Experiment with various approach
+		* Have the actual files compressed+encrypted and stowed on s3
+			- Basic file hashing to deduplicate on a file level?
+			- Basic move/etc detection?
+		* For any delta backward (ie everytime there is a new change)
+			- Calculate the delta then store it into a deduplication archive?
 
 S3 Bucket Validation
 	1. Ensure that the bucket has the right policy
@@ -169,6 +192,7 @@ Data Recovery
 	1. Should be able to reconstruct the backup if the 'caches' are missing
 	2. Catalogue/Indexes/Metadata are useful for speeding up backups
 	3. Should if all else fail be able to at least get the data content itself
+	4. see lziprecover and bzip2recover for compressed data recovery
 
 Scalability
 	1. Mostly aiming for gigabytes/terabytes backup input
