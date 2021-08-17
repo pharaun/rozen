@@ -8,6 +8,7 @@ Compression:
 	zst  - 160M - 5m 6s (zstd)
 	lz   - 160M - 6m 53s (lzip - lzma based)
 	xz   - 153M - 7m 3s (lzma/xz)
+	zst  - 136M - 5m 39s (zstd wlog=31,strat=9,clog=30,slog=30)
 	lrz  - 136M - 33s (zpaq failed) (long dictionary lzma) (lrzip)
 	zpaq - 135M - 9m 43s
 	br   - 126M - 31m 15s (brotli)

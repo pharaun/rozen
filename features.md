@@ -48,6 +48,8 @@ Storage Feature
 			- Compression check with lz4 or one of the fast algo to verify if it is compressable
 				* If not, do we want to skip compression and go directly to encryption?
 		* At what point is it worth to just eat the space loss cos of deep archive pricing?
+		* Compression engine to use:
+			- Zstd
 	3. Deduplication
 		* None
 			- Stored as it is for each backup
@@ -62,8 +64,7 @@ Storage Feature
 			- Store the delta of the file change incrementally
 		* Block deduplication
 			- Chunk each incoming file/backup into blocks
-			- Store only the changed and different blocks
-		* Delta Block deduplication?
+			- Store only the changed and different blocks * Delta Block deduplication?
 			- Chunk each incoming file/backup into blocks
 			- Delta diff it against near blocks
 			- If sufficiently different that a delta isn't a win, store whole
