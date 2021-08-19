@@ -11,6 +11,9 @@ Storage Target
 		* Otherwise if metadata is bundled with the file then it doesn't matter
 	3. SSH FTP?
 		* If support filesystem target
+	4. SQLite
+		* Can store blobs into sqlite
+		* Single file backup (versus spread over the filesystem)
 
 Storage Feature
 	1. Encryption
@@ -78,6 +81,7 @@ Storage Feature
 			- Good for recovering from subset of errors
 			- Do we need it for S3 target?
 			- What level of ECC do we want, per file, per archive per w/e
+		* par2deep?
 	5. Data integrity
 		* Cryptographic hash on the backup metadata
 		* Cryptographic hash on the backup data itself
