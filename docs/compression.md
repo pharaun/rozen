@@ -5,6 +5,7 @@ Compression:
 	gz   - 304M - 1m 43s
 	dar  - 294M - 1m 11s (Tar+bz2 replacement)
 	bz2  - 287M - 58s
+	dar  - 260M - 5m 59 (Tar+zstd replacement)
 	zst  - 160M - 5m 6s (zstd)
 	lz   - 160M - 6m 53s (lzip - lzma based)
 	xz   - 153M - 7m 3s (lzma/xz)

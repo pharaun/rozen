@@ -3,6 +3,7 @@ use ignore::WalkBuilder;
 use std::fs::File;
 use tar::{Builder, Header};
 use std::io::Read;
+use std::io::Write;
 
 fn main() {
     let target_dir = "tmp";
@@ -11,6 +12,8 @@ fn main() {
 
     let tar_file = File::create("test.tar").unwrap();
     let mut tar = Builder::new(tar_file);
+
+    let mut test_file = File::create("test.file").unwrap();
 
     // Do we want sort by filename? it will allow determistic order
     for entry in WalkBuilder::new(target_dir)
@@ -44,12 +47,14 @@ fn main() {
 
                                 // Header for the tar pack
                                 let mut header = Header::new_gnu();
-                                header.set_path(e.path()).unwrap();
                                 header.set_size(file_data.len() as u64);
                                 header.set_cksum();
 
                                 // stuff it into the tar now
-                                tar.append(&header, &file_data[..]).unwrap();
+                                tar.append_data(&mut header, e.path(), &file_data[..]).unwrap();
+
+                                // Dump it to the file too
+                                test_file.write(&file_data[..]);
 
                             } else {
                                 // Pull in COMP
@@ -57,12 +62,14 @@ fn main() {
 
                                 // Header for the tar pack
                                 let mut header = Header::new_gnu();
-                                header.set_path(e.path()).unwrap();
                                 header.set_size(comp_data.len() as u64);
                                 header.set_cksum();
 
                                 // stuff it into the tar now
-                                tar.append(&header, &comp_data[..]).unwrap();
+                                tar.append_data(&mut header, e.path(), &comp_data[..]).unwrap();
+
+                                // Dump it to the file too
+                                test_file.write(&comp_data[..]);
                             }
                         } else {
                             println!("SKIP: {}", e.path().display());
