@@ -10,3 +10,10 @@ edition = "2018"
 
 # FS Walker
 ignore = "0.4"
+
+# Compressor
+zstd = "0.9"
+
+# TODO: develop my own
+# Temporary archive format
+tar = "0.4"
