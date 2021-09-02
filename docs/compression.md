@@ -22,11 +22,11 @@ Chunk Compression:
 
 Deduplication:
     Works:
-        fpgaminer/preserve  	- 1.0G (Claims to compress with xz and stuff but?)
-        restic/restic 			- 995M (No compression of blocks)
+        fpgaminer/preserve      - 1.0G (Claims to compress with xz and stuff but?)
+        restic/restic           - 995M (No compression of blocks)
         andrewchambers/bupstash - 456M
-        sourcefrog/conserve 	- 455M
-        dpc/rdedup 				- 294M
-        bup/bup 				- 294M
-        asuran-rs/asuran 		- 261M (zstd,22)
-        borgbackup/borg 		- 241M (zstd,22)
+        sourcefrog/conserve     - 455M
+        dpc/rdedup              - 294M
+        bup/bup                 - 294M
+        asuran-rs/asuran        - 261M (zstd,22)
+        borgbackup/borg         - 241M (zstd,22)
