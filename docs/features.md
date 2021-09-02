@@ -11,12 +11,11 @@ Storage Target
 		* Otherwise if metadata is bundled with the file then it doesn't matter
 	3. SSH FTP?
 		* If support filesystem target
-	4. SQLite
-		* Can store blobs into sqlite
-		* Single file backup (versus spread over the filesystem)
 
 Storage Feature
 	1. Encryption
+		* Guard against plain text attacks
+			- DAR padding the data?
 		* Unclear what is best option here?
 			- Symmerical Cryptography
 				* Any merit of this?
@@ -37,62 +36,53 @@ Storage Feature
 			- Probs covered by crypto hashes on things
 		* Security
 			- Threat model?
+		* Multiple keys?
+			- One key for metadata + files
+			- One key for chunks in an index
+				* Allow decompression on untrusted ec2 machines for garbage collection
 	2. Compression
-		* Packed compression
-			- Where everything is passed through the compression routine
-			- More efficient compression
-		* Unpacked compression
-			- Where only the data is compressed one by one
-			- Better for corruption and error recovery
-			- Less efficient compression (Shouldn't matter past a certain size?)
-		* Compression of already compressed artifacts
-			- Do we want it to try to compress everything to get as much compression
-			- Do we want to focus more on speed?
-			- Compression check with lz4 or one of the fast algo to verify if it is compressable
-				* If not, do we want to skip compression and go directly to encryption?
-		* At what point is it worth to just eat the space loss cos of deep archive pricing?
 		* Compression engine to use:
 			- Zstd
+		* Unpacked compression
+			- One data chunk per compression block
+			- Less efficient on small files
+			- More resistant to corruption
+			- Better indexability
+		* Compression of already compressed artifacts
+			- MAYBE: compression check with high speed Zstd
+			- If no good, either continue or skip to encryption layer
 	3. Deduplication
-		* None
-			- Stored as it is for each backup
-		* Incremental File (Kinda per file deduplication)
-			- Store whole file change incrementally
-			- Requires the last whole + all incremental to date
-				* Can do whole once a month
-				* Weekly incremental against the last monthly whole
-				* Daily incremental against the last weekly incremental
-			- Delta to last whole or last incremental backup
-		* Incremental File Delta
-			- Store the delta of the file change incrementally
-		* Block deduplication
-			- Chunk each incoming file/backup into blocks
-			- Store only the changed and different blocks * Delta Block deduplication?
-			- Chunk each incoming file/backup into blocks
-			- Delta diff it against near blocks
-			- If sufficiently different that a delta isn't a win, store whole
-		* Tiers of
-			* Deduplication in term of per backup
-			* Deduplication in term of all backup for a single machine
-			* Deduplication in term of all backup for all machines
-		* At what point is it worth to just eat the space loss cos of deep archive pricing?
+		* Per file deduplication
+			- Store whole file and deduplicate based off this
+		* Future Deduplication improvement
+			- Incremental
+				* rdiff/delta encoding to save space
+					- Bsdiff explosive memory usage
+					- Xdelta good but need source and destination
+					- Rdiff less good but only need source and sig (can be cached)
+				* restore challenges (need all delta+original)
+			- Block
+				* Chunk each incoming file/backup into blocks
+				* Store only the changed and different blocks
+			- Block and Delta
+				* Same as Block with addition of delta encoding for adjecent blocks
 	4. Partity
-		* Reed-Solomon ECC
-			- Good for recovering from subset of errors
-			- Do we need it for S3 target?
-			- What level of ECC do we want, per file, per archive per w/e
-		* par2deep?
+		* S3
+			- No partity (they do on our behalf)
+		* Future improvement
+			- Reed-Solomon ECC
+				* Mainly for on disk recovery of physical media
+				* See: par2
+				* See: darrenldl/blockyarchive
 	5. Data integrity
-		* Cryptographic hash on the backup metadata
-		* Cryptographic hash on the backup data itself
-		* CRC vs Hashes
-			- crc has burst error detection up to crc size itself
-			- Pick correct size CRC for the data
-			- Can have corruption in the crc/hash so have a few (see gzip/bzip2)
-			- http://users.ece.cmu.edu/~koopman/pubs/faa15_tc-14-49.pdf
+		* Cryptographic hash on metadata
+		* Cryptographic hash on data
+		* CRC/hash on all headers
 	6. Concurrency
 		* Multiple machine backup
-		* How do we handle it, have a separate repo for each machine?
+			- Synchronize data to a central machine
+			- Backup from the central machine
+			- Outside scope
 
 Filesystem features
 	1. Sparse file
@@ -108,99 +98,106 @@ File Finder
 		* Exclude File
 		* Regex?
 		* Global ignore/exclude list (ie *.swp, *.pyc)
+		* Flexible filtering such as filtering according to .gitignore files for eg
 	2. Metadata
 		* Store metadata with file?
 		* Store metadata change with empty file for metadata only change?
 		* File move/renames?
-			- How hard to catch/handle this?
+			- Solve via hashing on file content
+			- Main challenge is for per-file delta/deduplication
 			- Less need if its a block deduplication system
-			- Needed more for per file deduplication/whole backups
 	3. File Changed
-		* Watchman (fb project to monitor file changes)
-		* FSEvent (OSX api to monitor FS changes)
+		* Monitor modification time for changes
+		* Pre-hash file for the key generation for storage
+			- Rehash on processing and if final result different, retry
+		* Kernel FS monitor
+			* Watchman (fb project)
+			* FSEvent (OSX)
 
 Backup features
-	1. How much all in one system?
-	2. Bother with OS/System backup or only personal data and /home dirs for eg
-		* Priorization is user/personal data, the OS/machine can be rebuilt
-	3. Tiers of backup?
-		* WORM - Photography raw files?
-	4. System impact/Performance
-		* Resume backup interrupted by sleep?
-		* Resume backup when program crashes?
-	5. Style of backup
-		* Continious (ie inotify/etc) and backup modification
-		* Snapshots. (Daily, Weekly, Etc)
-		* How to handle content changing from under
-			- Inotify to monitor?
-			- Retry?
-	6. Multithreading
-		* Reading from FS?
-			- NVME/SSD are pretty fast with multiple reading threads
-		* Compressing?
-			- Heard its usually the slow part
-		* Encryption?
-		* Uploading to S3/SSH
-			- Uncertain, dependent on upload + Link quality
-	7. Pricing
+	1. Don't bother with OS/System backup, only personal data (ie /home dirs)
+	2. Tier of backups
+		* WORM - photography raw files, these should never change
+			- Probs can store two set of index, one for WORM, one for normal
+			- Validation of local copy and restore from backup if local copy is corrupt
+			- Issue warning if local data changes
+		* Normal - homedir data
+			- Changes often
+	3. Error recovery
+		* Resume backup when interrupted by sleep & crashes
+	4. Style of backup
+		* Continious
+			- inotify/fsevent watchers...
+		* Snapshots
+			- Daily to Weekly
+	5. Multithreading
+		* Directory Walking
+			- Fast on SSD
+		* Compression
+			- Likely to be slow part
+		* Encryption
+			- Usually faster than compression
+		* Uploading
+			- Dependant on uplink
+			- Probs bottleneck
+			- Can parallel to a certain point then it'll block all previous steps
+	6. Pricing
 		* Would be nice to have it print out the cost of each backup
 		* When performing cleanup show how much it would save
 		* Show the cost of IE. metadata vs actual data or so
-	8. Restoring
-		* Restore invidual files within a backup?
-		* Require whole backup to be restored?
-		* Provide a FUSE layer (for fetching invidual file?)
-	9. Alternative approaches?
-		* Always sync latest
-		* Deduplication/delta/etc is for the previous backups to provide a history cheaper
-		* Compare pricing
-			- Spinning up an EC2 to do work on you behalf to the S3 repo
-			- Structuring the S3 repo so that you can don't need additional work
-			- Streaming the data back to client-side to reprocess ($0.09/GB exgress price)
-		* Consider restoration speed
-			- Will have to restore from Deep Archive -> S3 then fetch data so balance
-				* Number of restores/time taken to do them
-		* Store Metadata/other data into S3
-			- DynamoDB an option?
-	10. Scheduling of backup
+		* Should be glacier aware and inform the user of implications here
+			- Could restrict Glacier to WORM data
+		* Let the user know the cost of various operations like fetching X data will
+			take x time and $y
+	7. Restoring
+		* Easy to restore invidual files
+			- Consult indexes and fetch the correct file block
+		* Easy to restore whole backup
+			- Consult indexes and parallel-fetch the file blocks
+			- Winkle if additional processing like Delta/etc
+	8. Scheduling of backup
 		* Daily backup
-		* Further back it goes the less is retained
-			- After 1 week or more weekly backup is kept
-			- After 1 month or more montly backup is kept
-			- After 1 year or more yearly backup is kept
-	11. Locality of operations
-		* IE could look at ECS/EC2 for validation/integrity checks
-			- Free data transfer could be cheaper
-		* Should also support client-side validation checking
-	12. Experiment with various approach
-		* Have the actual files compressed+encrypted and stowed on s3
-			- Basic file hashing to deduplicate on a file level?
-			- Basic move/etc detection?
-		* For any delta backward (ie everytime there is a new change)
-			- Calculate the delta then store it into a deduplication archive?
+			- If nothing change, upload an small index indicating to look at previous index?
+		* Further back employ some prunning strategy?
+			- Mostly dependent on index size
+			- Mostly dependent on GC effiency
+	9. Multiple machine backups
+		* One client per repo
+			- Can be one NAS
+				* Syncthing/unison/rsync
+			- Layout:
+				machines/
+					machine1/
+						<...> machine 1 data
+					machineN/
+						<...> machine n data
+				shared/
+					<...> shared common data
+		* MAYBE: Central daemon
+			- Enable each machine to compress/encrypt their own backup
+			- Stream the backup through daemon into cloud
+			- Daemon enforces append only backups
+			- Secured backup machine with S3 keys, clients can be compromised and push
+				bad data but they can't access s3
+			- Restoration
+				* Could use the daemon to restore a backup stream on the client behalf
+	10. Configuration
+		* Could store the config into the cloud service for ease of restore
 
 S3 Bucket Validation
 	1. Ensure that the bucket has the right policy
 		* Currently Private only (no public sharing)
 	2. Backup Mode
 		* Can only append/write to a bucket, no modification or overwrite
-		* Can (?) read from the bucket
+			- Enforced via bucket versoning?
 	3. Admin Mode
-		* Can modify objects in bucket?
-			- Unclear if the data scheme will need to be able to rewrite
-			- Would need some sort of compacting/purging/etc
-
-Repo Validation
-	1. Ensure that the repo is in a good and consistent state
+		* Prune via iterating through indexes and deleting old enough ones
+		* Prune via deleting backup blocks not referred in indexes
+		* Require decryption of indexes
 
 Data Recovery
-	1. Should be able to reconstruct the backup if the 'caches' are missing
-	2. Catalogue/Indexes/Metadata are useful for speeding up backups
-	3. Should if all else fail be able to at least get the data content itself
-	4. see lziprecover and bzip2recover for compressed data recovery
-
-Scalability
-	1. Mostly aiming for gigabytes/terabytes backup input
-	2. Few machines not hundreds/thousands of machines
-		* Do we want to even share machines in one repo?
-		* Could always do multiple repo, one per machine
+	1. If one block lost, that file is lost
+	2. Should be able to restore most data with a loss of indexes
+		- Main challenge is file names/duplicate file names....
+		- Store multiple Index files?
+	3. If all else fail should be able to gain access to the content itself

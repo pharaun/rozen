@@ -22,21 +22,11 @@ Chunk Compression:
 
 Deduplication:
     Works:
-        fpgaminer/preserve - 1.0G (Claims to compress with xz and stuff but?)
-        restic/restic - 995M (No compression of blocks)
+        fpgaminer/preserve  	- 1.0G (Claims to compress with xz and stuff but?)
+        restic/restic 			- 995M (No compression of blocks)
         andrewchambers/bupstash - 456M
-        sourcefrog/conserve - 455M
-        dpc/rdedup - 294M
-        bup/bup - 294M
-        asuran-rs/asuran - 261M (zstd,22)
-        borgbackup/borg - 241M (zstd,22)
-
-    Busted:
-        zbackup/zbackup - (Complicated installation, no thanks for now)
-        basak/ddar - (Python something couldn't get it setup, i think py2.7?)
-        derekp7/snebu - (Client/server setup, kinda complicated to get going?)
-        kopia/kopia - (Works but is unclear what it all backed up)
-
-    TBD:
-        duplicati/duplicati
-        gilbertchen/duplicacy
+        sourcefrog/conserve 	- 455M
+        dpc/rdedup 				- 294M
+        bup/bup 				- 294M
+        asuran-rs/asuran 		- 261M (zstd,22)
+        borgbackup/borg 		- 241M (zstd,22)
