@@ -1,7 +1,7 @@
 use ignore::WalkBuilder;
 
-use std::io::{Cursor, Read, copy};
-use crypto_hash::{Algorithm, hex_digest};
+use std::io::{Cursor, Seek, SeekFrom, copy};
+use blake3::Hasher;
 use zstd::stream::read::Encoder;
 
 fn main() {
@@ -35,28 +35,26 @@ fn main() {
                             if ft.is_file() {
                                 println!("COMP: {}", e.path().display());
 
-                                // Non ideal but spool the whole file to a buffer for now
-                                let file_data: Vec<u8> = {
-                                    let mut content = Vec::new();
+                                let mut file_data = std::fs::File::open(e.path()).unwrap();
 
-                                    std::fs::File::open(e.path())
-                                        .unwrap()
-                                        .read_to_end(&mut content)
-                                        .unwrap();
-                                    content
-                                };
-
-                                // Do a crypto content hash
-                                let content_hash = hex_digest(Algorithm::SHA256, &file_data[..]);
+                                // Hasher
+                                let mut hash = Hasher::new();
+                                copy(&mut file_data, &mut hash).unwrap();
+                                let content_hash = hash.finalize().to_hex();
 
                                 // Streaming compressor
+                                file_data.seek(SeekFrom::Start(0)).unwrap();
+
                                 let mut comp = Encoder::new(
-                                    &file_data[..],
+                                    &mut file_data,
                                     21
                                 ).unwrap();
 
                                 // Setup a zip and slurp in the data
-                                zip.start_file(content_hash, options).unwrap();
+                                zip.start_file(
+                                    content_hash.as_str(),
+                                    options
+                                ).unwrap();
                                 copy(&mut comp, &mut zip).unwrap();
                                 comp.finish();
 

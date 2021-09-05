@@ -13,6 +13,8 @@ Storage Target
         * If support filesystem target
 
 Storage Feature
+    0. MANDATORY:
+        * FS snapshot (apfs or zfs or btrfs)
     1. Encryption
         * Guard against plain text attacks
             - DAR padding the data?
@@ -83,6 +85,8 @@ Storage Feature
             - Synchronize data to a central machine
             - Backup from the central machine
             - Outside scope
+    7. External scripts?
+        * Some way to invoke external script on backup start and stop
 
 Filesystem features
     1. Sparse file

@@ -14,11 +14,11 @@ ignore = "0.4"
 # Compressor
 zstd = "0.9"
 
+# Hasher
+blake3 = "1.0.0"
+
 # Index
 rusqlite = { version = "0.25.3", features = ["bundled"] }
-
-# Temporary hash to prove some concepts
-crypto-hash = "0.3.4"
 
 # Temporary archive format
 zip = "0.5.13"
