@@ -17,8 +17,9 @@ zstd = "0.9"
 # Hasher
 blake3 = "1.0.0"
 
-# Index
+# File Index
 rusqlite = { version = "0.25.3", features = ["bundled"] }
+tempfile = "3"
 
 # Temporary archive format
 zip = "0.5.13"
