@@ -7,11 +7,53 @@ use blake3::Hasher;
 use rusqlite::Connection;
 use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
+use serde::Deserialize;
+
+// Configuration
+// At a later time honor: https://aws.amazon.com/blogs/security/a-new-and-standardized-way-to-manage-credentials-in-the-aws-sdks/
+// envy = "0.4.2" - for grabbing the env vars via serde
+#[derive(Deserialize, Debug)]
+struct Config {
+    target: String,
+    symlink: bool,
+    same_fs: bool,
+
+    sources: Vec<Source>,
+}
+
+#[derive(Deserialize, Debug)]
+struct Source {
+    include: Vec<String>,
+    exclude: Vec<String>,
+
+    #[serde(rename = "type")]
+    source_type: SourceType,
+}
+
+#[derive(Deserialize, Debug)]
+enum SourceType {
+    Worm,
+}
 
 fn main() {
-    let target_dir = "docs";
-    let follow_symlink = true;
-    let same_file_system = true;
+    let config: Config = toml::from_str(r#"
+        symlink = true
+        same_fs = true
+
+        # Temporary (replaced by sources)
+        target = "docs"
+
+        [[sources]]
+            include = ["docs"]
+            exclude = ["*.pyc"]
+            type = "Worm"
+
+    "#).unwrap();
+
+    println!("CONFIG:");
+    println!("{:?}", config);
+
+    let target = config.sources.get(0).unwrap().include.get(0).unwrap();
 
     // Zipfile in memory to prove concept
     let mut buf_zip = Cursor::new(Vec::new());
@@ -49,10 +91,10 @@ fn main() {
             ).unwrap();
 
             // Sort filename for determistic order
-            for entry in WalkBuilder::new(target_dir)
-                .follow_links(follow_symlink)
+            for entry in WalkBuilder::new(target)
+                .follow_links(config.symlink)
                 .standard_filters(false)
-                .same_file_system(same_file_system)
+                .same_file_system(config.same_fs)
                 .sort_by_file_name(|a, b| a.cmp(b))
                 .build() {
 
