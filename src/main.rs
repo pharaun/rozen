@@ -2,12 +2,16 @@ use rusqlite as rs;
 
 use ignore::WalkBuilder;
 
-use std::io::{Cursor, Seek, SeekFrom, copy};
+use std::io::{Seek, SeekFrom, copy, Cursor};
 use blake3::Hasher;
 use rusqlite::Connection;
 use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
 use serde::Deserialize;
+
+mod backend_mem;
+use crate::backend_mem::Backend;
+
 
 // Configuration
 // At a later time honor: https://aws.amazon.com/blogs/security/a-new-and-standardized-way-to-manage-credentials-in-the-aws-sdks/
@@ -55,16 +59,10 @@ fn main() {
 
     let target = config.sources.get(0).unwrap().include.get(0).unwrap();
 
-    // Zipfile in memory to prove concept
-    let mut buf_zip = Cursor::new(Vec::new());
+    // In memory backend for data storage
+    let mut backend = backend_mem::MemoryVFS::new();
+
     {
-        let mut zip = zip::ZipWriter::new(&mut buf_zip);
-
-        // Options
-        let options = zip::write::FileOptions::default().compression_method(
-            zip::CompressionMethod::Stored
-        );
-
         // Temp file for rusqlite
         let (mut s_file, s_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
         let conn = Connection::open(&s_path).unwrap();
@@ -121,12 +119,9 @@ fn main() {
                                         21
                                     ).unwrap();
 
-                                    // Setup a zip and slurp in the data
-                                    zip.start_file(
-                                        content_hash.as_str(),
-                                        options
-                                    ).unwrap();
-                                    copy(&mut comp, &mut zip).unwrap();
+                                    // Stream the data into the backend
+                                    let mut write_to = backend.write(content_hash.as_str()).unwrap();
+                                    copy(&mut comp, &mut write_to).unwrap();
                                     comp.finish();
 
                                     // Load file info into index
@@ -147,7 +142,7 @@ fn main() {
             }
         }
 
-        // Spool the sqlite file into the zip as index
+        // Spool the sqlite file into the backend as index
         conn.close().unwrap();
 
         // TODO: not sure we need the seek here since we never touched this handle
@@ -159,31 +154,36 @@ fn main() {
                 21
             ).unwrap();
 
-            // Setup a zip and slurp in the data
-            zip.start_file(
-                "INDEX.sqlite.zst",
-                options
-            ).unwrap();
-            copy(&mut comp, &mut zip).unwrap();
+            // Write to the backend
+            let mut write_to = backend.write("INDEX.sqlite.zst").unwrap();
+            copy(&mut comp, &mut write_to).unwrap();
             comp.finish();
         }
-
-        // wrap up zip file
-        zip.finish().unwrap();
     }
-
-    // Reread to output debug info
-    buf_zip.set_position(0);
 
     println!("\nARCHIVE Dump");
-    let mut zip_read = zip::ZipArchive::new(&mut buf_zip).unwrap();
-    for i in 0..zip_read.len() {
-        let file = zip_read.by_index(i).unwrap();
-        println!("SIZE: {:5}, NAME: {}", file.size(), file.name());
+    for k in backend.list_keys().unwrap() {
+        // Get key, pull file, re-hash it and verify
+        let mut content: Vec<u8> = Vec::new();
+        let mut read_from = backend.read(&k).unwrap();
+        copy(&mut read_from, &mut content).unwrap();
+
+        let len = content.len();
+
+        // Validate the hash now.
+        let mut hash = Hasher::new();
+        let mut cursor = Cursor::new(content);
+        let mut dec = Decoder::new(&mut cursor).unwrap();
+        copy(&mut dec, &mut hash).unwrap();
+        let content_hash = hash.finalize().to_hex();
+
+        let is_same = content_hash.as_str() == k;
+
+        println!("SAME: {:5} SIZE: {:5}, NAME: {}", is_same, len, k);
     }
 
-    // Grab db out of zip and put it to a temp handle
-    let mut index_content = zip_read.by_name("INDEX.sqlite.zst").unwrap();
+    // Grab db out of backend and put it to a temp handle
+    let mut index_content = backend.read("INDEX.sqlite.zst").unwrap();
 
     // Setup decompression stream
     let mut dec = Decoder::new(&mut index_content).unwrap();
