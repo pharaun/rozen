@@ -16,6 +16,46 @@ Storage Feature
     0. MANDATORY:
         * FS snapshot (apfs or zfs or btrfs)
     1. Encryption
+		* Library:
+			- sodiumoxide (libsodium rust bindings)
+			- https://docs.rs/sodiumoxide/0.2.7/sodiumoxide/
+		* Algo:
+			- ChaCha20-Poly1305 (or equiv in lib sodium)
+		* Key Derivation
+			- argon2id
+		* Random Generator
+			- /dev/urandom (whatever libsodium uses)
+		* Crypto Hash
+			- Blake2b (length extension attack resistant)
+				* Candidate for SHA-3
+			- https://soatok.blog/2021/08/24/programmers-dont-understand-hash-functions/
+				* Pre hash + Encryption (can allow for rainbow attack on plaintext data)
+				* What you really want to use in this situation is HMAC with a
+					static secret key (which is only known client-side).
+				* Blind Index - https://ciphersweet.paragonie.com/security#blind-indexes
+					- Not absolute, can have some error rate, would need to then validate
+						that it is the same data but it would protect against some attacks
+				* IND-CPA (security against chosen plaintext attack)
+					- What's involved?
+		* Crypto Key Generation
+			- Generate a new key + nonce for each file
+				* https://crypto.stackexchange.com/a/84440
+			- Master key to encrypt
+
+		* Asynchronous crypto/key
+			- Unclear yet
+			- curve25519xsalsa20poly1305 (Curve25519 for sure)
+
+		* Large streaming
+			* Update: On Twitter, zooko points to Tahoe-LAFS as an example of
+				getting it right. Additionally, taking the MAC of the current state
+				of a digest operation and continuing the operation has been
+				proposed for sponge functions (like SHA-3) under the name
+				MAC-and-continue. The exact provenance of this isn't clear, but I
+				think it might have been from the Keccak team in this paper.
+				Although MAC-and-continue doesn't allow random access, which might
+				be important for some situations.
+
         * Guard against plain text attacks
             - DAR padding the data?
         * Unclear what is best option here?
