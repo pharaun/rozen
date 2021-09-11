@@ -2,7 +2,7 @@ use rusqlite as rs;
 
 use ignore::WalkBuilder;
 
-use std::io::{Seek, SeekFrom, copy, Cursor};
+use std::io::{Seek, SeekFrom, copy, Cursor, Read};
 use blake3::Hasher;
 use rusqlite::Connection;
 use zstd::stream::read::Encoder;
@@ -12,13 +12,15 @@ use serde::Deserialize;
 mod backend_mem;
 use crate::backend_mem::Backend;
 
+use sodiumoxide::crypto::secretstream::gen_key;
+use sodiumoxide::crypto::secretbox;
+
 
 // Configuration
 // At a later time honor: https://aws.amazon.com/blogs/security/a-new-and-standardized-way-to-manage-credentials-in-the-aws-sdks/
 // envy = "0.4.2" - for grabbing the env vars via serde
 #[derive(Deserialize, Debug)]
 struct Config {
-    target: String,
     symlink: bool,
     same_fs: bool,
 
@@ -40,12 +42,14 @@ enum SourceType {
 }
 
 fn main() {
+    sodiumoxide::init().unwrap();
+
+    // Per run key
+    let key = gen_key();
+
     let config: Config = toml::from_str(r#"
         symlink = true
         same_fs = true
-
-        # Temporary (replaced by sources)
-        target = "docs"
 
         [[sources]]
             include = ["docs"]
@@ -107,7 +111,7 @@ fn main() {
                                     let mut file_data = std::fs::File::open(e.path()).unwrap();
 
                                     // Hasher
-                                    let mut hash = Hasher::new();
+                                    let mut hash = Hasher::new_keyed(&key.0);
                                     copy(&mut file_data, &mut hash).unwrap();
                                     let content_hash = hash.finalize().to_hex();
 
@@ -119,10 +123,29 @@ fn main() {
                                         21
                                     ).unwrap();
 
+                                    let mut vec_comp = Vec::new();
+                                    copy(&mut comp, &mut vec_comp).unwrap();
+                                    comp.finish();
+
+                                    // Encrypt the stream
+                                    let fkey = secretbox::gen_key();
+                                    let fnonce = secretbox::gen_nonce();
+
+                                    let ciphertext = secretbox::seal(
+                                        &vec_comp[..],
+                                        &fnonce,
+                                        &fkey
+                                    );
+
                                     // Stream the data into the backend
                                     let mut write_to = backend.write(content_hash.as_str()).unwrap();
-                                    copy(&mut comp, &mut write_to).unwrap();
-                                    comp.finish();
+
+                                    // Write the key and nonce to the stream
+                                    write_to.write_all(&fkey.0).unwrap();
+                                    write_to.write_all(&fnonce.0).unwrap();
+
+                                    let mut cursor = Cursor::new(ciphertext);
+                                    copy(&mut cursor, &mut write_to).unwrap();
 
                                     // Load file info into index
                                     file_stmt.execute(rs::params![
@@ -154,10 +177,29 @@ fn main() {
                 21
             ).unwrap();
 
+            let mut vec_comp = Vec::new();
+            copy(&mut comp, &mut vec_comp).unwrap();
+            comp.finish();
+
+            // Encrypt the stream
+            let fkey = secretbox::gen_key();
+            let fnonce = secretbox::gen_nonce();
+
+            let ciphertext = secretbox::seal(
+                &vec_comp[..],
+                &fnonce,
+                &fkey
+            );
+
             // Write to the backend
             let mut write_to = backend.write("INDEX.sqlite.zst").unwrap();
-            copy(&mut comp, &mut write_to).unwrap();
-            comp.finish();
+
+            // Write the key and nonce to the stream
+            write_to.write_all(&fkey.0).unwrap();
+            write_to.write_all(&fnonce.0).unwrap();
+
+            let mut cursor = Cursor::new(ciphertext);
+            copy(&mut cursor, &mut write_to).unwrap();
         }
     }
 
@@ -170,9 +212,29 @@ fn main() {
 
         let len = content.len();
 
-        // Validate the hash now.
-        let mut hash = Hasher::new();
+        // Decrypt the stream
+        // read the key then nonce then stream
+        let mut dkey: [u8; 32] = [0; 32];
+        let mut dnonce: [u8; 24] = [0; 24];
+        let mut dciphertext = Vec::new();
+
         let mut cursor = Cursor::new(content);
+        cursor.read_exact(&mut dkey).unwrap();
+        cursor.read_exact(&mut dnonce).unwrap();
+        cursor.read_to_end(&mut dciphertext).unwrap();
+
+        let fkey = secretbox::Key::from_slice(&dkey).unwrap();
+        let fnonce = secretbox::Nonce::from_slice(&dnonce).unwrap();
+
+        let plaintext = secretbox::open(
+            &dciphertext[..],
+            &fnonce,
+            &fkey
+        ).unwrap();
+
+        // Validate the hash now.
+        let mut hash = Hasher::new_keyed(&key.0);
+        let mut cursor = Cursor::new(plaintext);
         let mut dec = Decoder::new(&mut cursor).unwrap();
         copy(&mut dec, &mut hash).unwrap();
         let content_hash = hash.finalize().to_hex();
@@ -185,8 +247,28 @@ fn main() {
     // Grab db out of backend and put it to a temp handle
     let mut index_content = backend.read("INDEX.sqlite.zst").unwrap();
 
+    // Decrypt the stream
+    // read the key then nonce then stream
+    let mut dkey: [u8; 32] = [0; 32];
+    let mut dnonce: [u8; 24] = [0; 24];
+    let mut dciphertext = Vec::new();
+
+    index_content.read_exact(&mut dkey).unwrap();
+    index_content.read_exact(&mut dnonce).unwrap();
+    index_content.read_to_end(&mut dciphertext).unwrap();
+
+    let fkey = secretbox::Key::from_slice(&dkey).unwrap();
+    let fnonce = secretbox::Nonce::from_slice(&dnonce).unwrap();
+
+    let plaintext = secretbox::open(
+        &dciphertext[..],
+        &fnonce,
+        &fkey
+    ).unwrap();
+
     // Setup decompression stream
-    let mut dec = Decoder::new(&mut index_content).unwrap();
+    let mut cursor = Cursor::new(plaintext);
+    let mut dec = Decoder::new(&mut cursor).unwrap();
 
     let (mut d_file, d_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
     copy(&mut dec, &mut d_file).unwrap();

@@ -17,6 +17,9 @@ zstd = "0.9"
 # Hasher
 blake3 = "1.0.0"
 
+# Encryption
+sodiumoxide = "0.2.7"
+
 # File Index
 rusqlite = { version = "0.25.3", features = ["bundled"] }
 tempfile = "3"
