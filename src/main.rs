@@ -2,8 +2,9 @@ use rusqlite as rs;
 
 use ignore::WalkBuilder;
 
-use std::io::{Seek, SeekFrom, copy, Cursor, Read};
+use std::io::{Seek, SeekFrom, copy, Cursor, Read, Write};
 use blake3::Hasher;
+use blake3::Hash;
 use rusqlite::Connection;
 use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
@@ -111,9 +112,10 @@ fn main() {
                                     let mut file_data = std::fs::File::open(e.path()).unwrap();
 
                                     // Hasher
-                                    let mut hash = Hasher::new_keyed(&key.0);
-                                    copy(&mut file_data, &mut hash).unwrap();
-                                    let content_hash = hash.finalize().to_hex();
+                                    let content_hash = hash(
+                                        &key.0,
+                                        &mut file_data
+                                    ).unwrap().to_hex().to_string();
 
                                     // Streaming compressor
                                     file_data.seek(SeekFrom::Start(0)).unwrap();
@@ -123,29 +125,20 @@ fn main() {
                                         21
                                     ).unwrap();
 
+                                    // Dump compressed data into memory for encryption
                                     let mut vec_comp = Vec::new();
                                     copy(&mut comp, &mut vec_comp).unwrap();
+                                    // Can't move this into encryption cuz comp.finish
                                     comp.finish();
-
-                                    // Encrypt the stream
-                                    let fkey = secretbox::gen_key();
-                                    let fnonce = secretbox::gen_nonce();
-
-                                    let ciphertext = secretbox::seal(
-                                        &vec_comp[..],
-                                        &fnonce,
-                                        &fkey
-                                    );
 
                                     // Stream the data into the backend
                                     let mut write_to = backend.write(content_hash.as_str()).unwrap();
 
-                                    // Write the key and nonce to the stream
-                                    write_to.write_all(&fkey.0).unwrap();
-                                    write_to.write_all(&fnonce.0).unwrap();
-
-                                    let mut cursor = Cursor::new(ciphertext);
-                                    copy(&mut cursor, &mut write_to).unwrap();
+                                    // Encrypt the stream
+                                    insecure_encrypt(
+                                        &vec_comp[..],
+                                        &mut write_to
+                                    ).unwrap();
 
                                     // Load file info into index
                                     file_stmt.execute(rs::params![
@@ -205,65 +198,36 @@ fn main() {
 
     println!("\nARCHIVE Dump");
     for k in backend.list_keys().unwrap() {
-        // Get key, pull file, re-hash it and verify
-        let mut content: Vec<u8> = Vec::new();
         let mut read_from = backend.read(&k).unwrap();
-        copy(&mut read_from, &mut content).unwrap();
 
-        let len = content.len();
-
-        // Decrypt the stream
-        // read the key then nonce then stream
-        let mut dkey: [u8; 32] = [0; 32];
-        let mut dnonce: [u8; 24] = [0; 24];
-        let mut dciphertext = Vec::new();
-
-        let mut cursor = Cursor::new(content);
-        cursor.read_exact(&mut dkey).unwrap();
-        cursor.read_exact(&mut dnonce).unwrap();
-        cursor.read_to_end(&mut dciphertext).unwrap();
-
-        let fkey = secretbox::Key::from_slice(&dkey).unwrap();
-        let fnonce = secretbox::Nonce::from_slice(&dnonce).unwrap();
-
-        let plaintext = secretbox::open(
-            &dciphertext[..],
-            &fnonce,
-            &fkey
+        let plaintext = insecure_decrypt(
+            &mut read_from
         ).unwrap();
 
+        let len = plaintext.len();
+
         // Validate the hash now.
-        let mut hash = Hasher::new_keyed(&key.0);
         let mut cursor = Cursor::new(plaintext);
         let mut dec = Decoder::new(&mut cursor).unwrap();
-        copy(&mut dec, &mut hash).unwrap();
-        let content_hash = hash.finalize().to_hex();
+        let content_hash = hash(&key.0, &mut dec).unwrap();
 
-        let is_same = content_hash.as_str() == k;
+        match Hash::from_hex(k.clone()) {
+            Ok(data_hash) => {
+                let is_same = data_hash == content_hash;
 
-        println!("SAME: {:5} SIZE: {:5}, NAME: {}", is_same, len, k);
+                println!("SAME: {:5} SIZE: {:5}, NAME: {}", is_same, len, k);
+            },
+            Err(_) => {
+                println!("SAME: {:5} SIZE: {:5}, NAME: {}", "----", len, k);
+            },
+        }
     }
 
     // Grab db out of backend and put it to a temp handle
     let mut index_content = backend.read("INDEX.sqlite.zst").unwrap();
 
-    // Decrypt the stream
-    // read the key then nonce then stream
-    let mut dkey: [u8; 32] = [0; 32];
-    let mut dnonce: [u8; 24] = [0; 24];
-    let mut dciphertext = Vec::new();
-
-    index_content.read_exact(&mut dkey).unwrap();
-    index_content.read_exact(&mut dnonce).unwrap();
-    index_content.read_to_end(&mut dciphertext).unwrap();
-
-    let fkey = secretbox::Key::from_slice(&dkey).unwrap();
-    let fnonce = secretbox::Nonce::from_slice(&dnonce).unwrap();
-
-    let plaintext = secretbox::open(
-        &dciphertext[..],
-        &fnonce,
-        &fkey
+    let plaintext = insecure_decrypt(
+        &mut index_content
     ).unwrap();
 
     // Setup decompression stream
@@ -291,4 +255,52 @@ fn main() {
         }
     }
     conn.close().unwrap();
+}
+
+
+fn hash<R: Read>(key: &[u8; 32], data: &mut R) -> Result<Hash, std::io::Error> {
+    let mut hash = Hasher::new_keyed(&key);
+    copy(data, &mut hash)?;
+    Ok(hash.finalize())
+}
+
+//********************************************************************************
+// TODO: this dumps the key+nonce to the stream, is not secure at all
+//********************************************************************************
+fn insecure_encrypt<W: Write>(data: &[u8], output: &mut W) -> Result<(), std::io::Error> {
+    // Generate the key + nonce
+    let fkey = secretbox::gen_key();
+    let fnonce = secretbox::gen_nonce();
+
+    let ciphertext = secretbox::seal(data, &fnonce, &fkey);
+
+    // Write the key and nonce to the stream
+    output.write_all(&fkey.0)?;
+    output.write_all(&fnonce.0)?;
+    output.write_all(&ciphertext)?;
+
+    Ok(())
+}
+
+fn insecure_decrypt<R: Read>(data: &mut R) -> Result<Vec<u8>, std::io::Error> {
+    // Decrypt the stream
+    // read the key then nonce then stream
+    let mut dkey: [u8; 32] = [0; 32];
+    let mut dnonce: [u8; 24] = [0; 24];
+    let mut dciphertext = Vec::new();
+
+    data.read_exact(&mut dkey)?;
+    data.read_exact(&mut dnonce)?;
+    data.read_to_end(&mut dciphertext)?;
+
+    let fkey = secretbox::Key::from_slice(&dkey).unwrap();
+    let fnonce = secretbox::Nonce::from_slice(&dnonce).unwrap();
+
+    let plaintext = secretbox::open(
+        &dciphertext[..],
+        &fnonce,
+        &fkey
+    ).unwrap();
+
+    Ok(plaintext)
 }
