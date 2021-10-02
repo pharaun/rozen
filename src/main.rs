@@ -13,8 +13,8 @@ use serde::Deserialize;
 mod backend_mem;
 use crate::backend_mem::Backend;
 
-use sodiumoxide::crypto::secretstream::gen_key;
 use sodiumoxide::crypto::secretbox;
+use sodiumoxide::crypto::secretstream::{gen_key, Stream, Tag, Push, Header, Key};
 
 
 // Configuration
@@ -267,7 +267,89 @@ fn hash<R: Read>(key: &[u8; 32], data: &mut R) -> Result<Hash, std::io::Error> {
 //********************************************************************************
 // TODO: this dumps the key+nonce to the stream, is not secure at all
 //********************************************************************************
-fn insecure_encrypt<W: Write>(data: &[u8], output: &mut W) -> Result<(), std::io::Error> {
+struct Encrypter<R> {
+    reader: R,
+
+    stream: Stream<Push>,
+
+    // TODO: could preemptivly dump the key + header to the out_buf
+    header: Option<Header>,
+    fkey: Option<Key>,
+
+    // Buffers
+    in_buf: Vec<u8>,
+    out_buf: Vec<u8>,
+
+    finished: bool,
+}
+
+impl<R: Read> Encrypter<R> {
+    fn new(reader: R) -> Self {
+        let fkey = gen_key();
+        let (stream, header) = Stream::init_push(&fkey).unwrap();
+
+        Encrypter {
+            reader,
+
+            stream,
+            header: Some(header),
+            fkey: Some(fkey),
+
+            // 16Kb encryption frames
+            in_buf: Vec::with_capacity(16 * 1024),
+            out_buf: Vec::with_capacity(16 * 1024),
+            finished: false,
+        }
+    }
+}
+
+impl<R: Read> Read for Encrypter<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // Steps:
+        // 1. Flush fkey
+        match &self.fkey {
+            Some(fkey) => {
+                let ret = flush_buf(&fkey.0, buf);
+                self.fkey = None;
+                return ret;
+            },
+            None => {},
+        }
+
+        // 2. Flush header
+        match &self.header {
+            Some(header) => {
+                let ret = flush_buf(&header.0, buf);
+                self.header = None;
+                return ret;
+            },
+            None => {},
+        }
+
+        // 3. Read till there is 16Kb of data in in_buf
+        // 4. Encrypt it to out_buf
+        // 5. flush out_buf
+        // 6. go to 3
+
+
+        Ok(0)
+    }
+}
+
+
+
+fn flush_buf(in_buf: &[u8], buf: &mut [u8]) -> std::io::Result<usize> {
+    // TODO: panic for now, improve/replace this function later
+    if buf.len() < in_buf.len() {
+        panic!("Buffer too small to contain in_buf: {} < {}", buf.len(), in_buf.len());
+    }
+    buf[..in_buf.len()].clone_from_slice(&in_buf);
+    Ok(in_buf.len())
+}
+
+
+
+fn insecure_encrypt<W: Write>(data: &[u8], output: &mut W) -> std::io::Result<()> {
     // Generate the key + nonce
     let fkey = secretbox::gen_key();
     let fnonce = secretbox::gen_nonce();
@@ -282,7 +364,7 @@ fn insecure_encrypt<W: Write>(data: &[u8], output: &mut W) -> Result<(), std::io
     Ok(())
 }
 
-fn insecure_decrypt<R: Read>(data: &mut R) -> Result<Vec<u8>, std::io::Error> {
+fn insecure_decrypt<R: Read>(data: &mut R) -> std::io::Result<Vec<u8>> {
     // Decrypt the stream
     // read the key then nonce then stream
     let mut dkey: [u8; 32] = [0; 32];
