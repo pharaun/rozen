@@ -319,22 +319,30 @@ fn encrypt_read<R: Read>(
     // 1. If buf_write == buf.len() return
     while buf_write < buf.len() {
         if !out_buf.is_empty() {
+            println!("buf_write: {}, buf_len: {}", buf_write, buf.len());
+
             // 2. If data in out_buf, flush into buf first
             buf_write += flush_buf(out_buf, &mut buf[buf_write..]);
+
+            println!("buf_write: {}, buf_len: {}", buf_write, buf.len());
 
         } else {
             let mut in_buf: [u8; CHUNK_SIZE] = [0; CHUNK_SIZE];
 
             // 3. Read till there is 8Kb of data in in_buf
             match fill_buf(data, &mut in_buf) {
+                // 4a. Nothing left in out_buf and is EoF, exit
+                Ok((true, 0)) => return Ok(buf_write),
                 Ok((true, in_len)) => {
-                    // 4a. Final read, finalize
+                    // 4b. Final read, finalize
+                    // Tag::Final
                     out_buf.extend_from_slice(
                         &in_buf[..in_len]
                     );
                 },
                 Ok((false, in_len)) => {
-                    // 4b. Copy in_buf -> out_buf
+                    // 4c. Copy in_buf -> out_buf
+                    // Tag::Message
                     out_buf.extend_from_slice(
                         &in_buf[..in_len]
                     );
@@ -352,12 +360,102 @@ mod test_encrypt_read {
     use super::*;
 
     #[test]
-    fn big_buf_small_vec() {
-        let mut in_buf: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
+    fn empty_data_empty_out_buf() {
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
+        let mut out_buf: Vec<u8> = Vec::new();
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(fill_buf(&mut in_buf, &mut buf).unwrap(), (true, 2));
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 0);
+        assert_eq!(&out_buf[..], &[]);
+        assert_eq!(&buf, &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn empty_data_small_out_buf() {
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
+        let mut out_buf: Vec<u8> = vec![1, 2];
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 2);
+        assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[1, 2, 0, 0]);
+    }
+
+    #[test]
+    fn empty_data_big_out_buf() {
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
+        let mut out_buf: Vec<u8> = vec![1, 2, 3, 4, 5, 6];
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        assert_eq!(&out_buf[..], &[5, 6]);
+        assert_eq!(&buf, &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn small_data_empty_out_buf() {
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
+        let mut out_buf: Vec<u8> = Vec::new();
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 2);
+        assert_eq!(&out_buf[..], &[]);
+        assert_eq!(&buf, &[1, 2, 0, 0]);
+    }
+
+    #[test]
+    fn small_data_small_out_buf() {
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
+        let mut out_buf: Vec<u8> = vec![3, 4];
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        assert_eq!(&out_buf[..], &[]);
+        assert_eq!(&buf, &[3, 4, 1, 2]);
+    }
+
+    #[test]
+    fn small_data_big_out_buf() {
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
+        let mut out_buf: Vec<u8> = vec![3, 4, 5, 6, 7, 8];
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        assert_eq!(&out_buf[..], &[7, 8]);
+        assert_eq!(&buf, &[3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn big_data_empty_out_buf() {
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4, 5, 6]);
+        let mut out_buf: Vec<u8> = Vec::new();
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        assert_eq!(&out_buf[..], &[5, 6]);
+        assert_eq!(&buf, &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn big_data_small_out_buf() {
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4, 5, 6]);
+        let mut out_buf: Vec<u8> = vec![7, 8];
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        assert_eq!(&out_buf[..], &[3, 4, 5, 6]);
+        assert_eq!(&buf, &[7, 8, 1, 2]);
+    }
+
+    #[test]
+    fn big_data_big_out_buf() {
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4, 5, 6]);
+        let mut out_buf: Vec<u8> = vec![7, 8, 9, 10, 11, 12];
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        assert_eq!(&out_buf[..], &[11, 12]);
+        assert_eq!(&buf, &[7, 8, 9, 10]);
     }
 }
 
