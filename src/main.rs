@@ -2,6 +2,7 @@ use rusqlite as rs;
 
 use ignore::WalkBuilder;
 
+use std::cmp;
 use std::io::{Seek, SeekFrom, copy, Cursor, Read, Write};
 use blake3::Hasher;
 use blake3::Hash;
@@ -269,17 +270,8 @@ fn hash<R: Read>(key: &[u8; 32], data: &mut R) -> Result<Hash, std::io::Error> {
 //********************************************************************************
 struct Encrypter<R> {
     reader: R,
-
     stream: Stream<Push>,
-
-    // TODO: could preemptivly dump the key + header to the out_buf
-    header: Option<Header>,
-    fkey: Option<Key>,
-
-    // Buffers
-    in_buf: Vec<u8>,
     out_buf: Vec<u8>,
-
     finished: bool,
 }
 
@@ -288,16 +280,17 @@ impl<R: Read> Encrypter<R> {
         let fkey = gen_key();
         let (stream, header) = Stream::init_push(&fkey).unwrap();
 
+        // 8Kb encryption frame buffer
+        let mut out_buf = Vec::with_capacity(16 * 1024);
+
+        // Flush fkey + header to out_buf
+        out_buf.extend_from_slice(&fkey.0);
+        out_buf.extend_from_slice(&header.0);
+
         Encrypter {
             reader,
-
             stream,
-            header: Some(header),
-            fkey: Some(fkey),
-
-            // 16Kb encryption frames
-            in_buf: Vec::with_capacity(16 * 1024),
-            out_buf: Vec::with_capacity(16 * 1024),
+            out_buf,
             finished: false,
         }
     }
@@ -306,46 +299,62 @@ impl<R: Read> Encrypter<R> {
 impl<R: Read> Read for Encrypter<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // Steps:
-        // 1. Flush fkey
-        match &self.fkey {
-            Some(fkey) => {
-                let ret = flush_buf(&fkey.0, buf);
-                self.fkey = None;
-                return ret;
-            },
-            None => {},
-        }
-
-        // 2. Flush header
-        match &self.header {
-            Some(header) => {
-                let ret = flush_buf(&header.0, buf);
-                self.header = None;
-                return ret;
-            },
-            None => {},
-        }
-
-        // 3. Read till there is 16Kb of data in in_buf
-        // 4. Encrypt it to out_buf
-        // 5. flush out_buf
-        // 6. go to 3
+        // 1. Flush data in out_buf into buf first
+        // 2. Read till there is 16Kb of data in in_buf
+        // 3. Encrypt it to out_buf
+        // 4. go to 1
 
 
         Ok(0)
     }
 }
 
+fn flush_buf(in_buf: &mut Vec<u8>, buf: &mut [u8]) -> usize {
+    // 1. Grab slice [0...min(buf.len(), in_buf.len()))
+    let split_at = cmp::min(in_buf.len(), buf.len());
+    // 2. Copy into buf
+    buf[..split_at].clone_from_slice(&in_buf[..split_at]);
+    // 3. Drop range from &mut in_buf
+    in_buf.drain(..split_at);
 
-
-fn flush_buf(in_buf: &[u8], buf: &mut [u8]) -> std::io::Result<usize> {
-    // TODO: panic for now, improve/replace this function later
-    if buf.len() < in_buf.len() {
-        panic!("Buffer too small to contain in_buf: {} < {}", buf.len(), in_buf.len());
-    }
-    buf[..in_buf.len()].clone_from_slice(&in_buf);
-    Ok(in_buf.len())
+    split_at
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn big_buf_small_vec() {
+        let mut in_buf: Vec<u8> = vec![1, 2];
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(flush_buf(&mut in_buf, &mut buf), 2);
+        assert_eq!(&buf, &[1, 2, 0, 0]);
+        assert_eq!(&in_buf[..], &[]);
+    }
+
+    #[test]
+    fn small_buf_big_vec() {
+        let mut in_buf: Vec<u8> = vec![1, 2, 3, 4];
+        let mut buf: [u8; 2] = [0; 2];
+
+        assert_eq!(flush_buf(&mut in_buf, &mut buf), 2);
+        assert_eq!(&buf, &[1, 2]);
+        assert_eq!(&in_buf[..], &[3, 4]);
+    }
+
+    #[test]
+    fn same_buf_same_vec() {
+        let mut in_buf: Vec<u8> = vec![1, 2, 3, 4];
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(flush_buf(&mut in_buf, &mut buf), 4);
+        assert_eq!(&buf, &[1, 2, 3, 4]);
+        assert_eq!(&in_buf[..], &[]);
+    }
+}
+
 
 
 
