@@ -275,7 +275,6 @@ struct Encrypter<R> {
     reader: R,
     stream: Stream<Push>,
     out_buf: Vec<u8>,
-    finished: bool,
 }
 
 impl<R: Read> Encrypter<R> {
@@ -293,7 +292,6 @@ impl<R: Read> Encrypter<R> {
             reader,
             stream,
             out_buf,
-            finished: false,
         }
     }
 }
@@ -303,6 +301,7 @@ impl<R: Read> Read for Encrypter<R> {
         encrypt_read(
             &mut self.reader,
             &mut self.out_buf,
+            &mut self.stream,
             buf,
         )
     }
@@ -312,6 +311,7 @@ impl<R: Read> Read for Encrypter<R> {
 fn encrypt_read<R: Read>(
     data: &mut R,
     out_buf: &mut Vec<u8>,
+    stream: &mut Stream<Push>,
     buf: &mut [u8]
 ) -> std::io::Result<usize> {
     let mut buf_write: usize = 0;
@@ -335,17 +335,41 @@ fn encrypt_read<R: Read>(
                 Ok((true, 0)) => return Ok(buf_write),
                 Ok((true, in_len)) => {
                     // 4b. Final read, finalize
-                    // Tag::Final
-                    out_buf.extend_from_slice(
-                        &in_buf[..in_len]
-                    );
+                    #[cfg(feature = "copy-test")]
+                    {
+                        // Testing only code
+                        out_buf.extend_from_slice(
+                            &in_buf[..in_len]
+                        );
+                    }
+                    #[cfg(not(feature = "copy-test"))]
+                    {
+                        stream.push_to_vec(
+                            &in_buf[..in_len],
+                            None,
+                            Tag::Final,
+                            out_buf,
+                        ).unwrap()
+                    }
                 },
                 Ok((false, in_len)) => {
                     // 4c. Copy in_buf -> out_buf
-                    // Tag::Message
-                    out_buf.extend_from_slice(
-                        &in_buf[..in_len]
-                    );
+                    #[cfg(feature = "copy-test")]
+                    {
+                        // Testing only code
+                        out_buf.extend_from_slice(
+                            &in_buf[..in_len]
+                        );
+                    }
+                    #[cfg(not(feature = "copy-test"))]
+                    {
+                        stream.push_to_vec(
+                            &in_buf[..in_len],
+                            None,
+                            Tag::Message,
+                            out_buf,
+                        ).unwrap()
+                    }
                 },
                 Err(e) => return Err(e),
             }
@@ -360,100 +384,118 @@ mod test_encrypt_read {
     use super::*;
 
     #[test]
+    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn empty_data_empty_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         let mut out_buf: Vec<u8> = Vec::new();
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 0);
+        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 0);
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[0, 0, 0, 0]);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn empty_data_small_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         let mut out_buf: Vec<u8> = vec![1, 2];
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 2);
+        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 2);
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[1, 2, 0, 0]);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn empty_data_big_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         let mut out_buf: Vec<u8> = vec![1, 2, 3, 4, 5, 6];
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[5, 6]);
         assert_eq!(&buf, &[1, 2, 3, 4]);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn small_data_empty_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
         let mut out_buf: Vec<u8> = Vec::new();
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 2);
+        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 2);
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[1, 2, 0, 0]);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn small_data_small_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
         let mut out_buf: Vec<u8> = vec![3, 4];
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[3, 4, 1, 2]);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn small_data_big_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
         let mut out_buf: Vec<u8> = vec![3, 4, 5, 6, 7, 8];
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[7, 8]);
         assert_eq!(&buf, &[3, 4, 5, 6]);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn big_data_empty_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4, 5, 6]);
         let mut out_buf: Vec<u8> = Vec::new();
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[5, 6]);
         assert_eq!(&buf, &[1, 2, 3, 4]);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn big_data_small_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4, 5, 6]);
         let mut out_buf: Vec<u8> = vec![7, 8];
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[3, 4, 5, 6]);
         assert_eq!(&buf, &[7, 8, 1, 2]);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn big_data_big_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4, 5, 6]);
         let mut out_buf: Vec<u8> = vec![7, 8, 9, 10, 11, 12];
         let mut buf: [u8; 4] = [0; 4];
 
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut buf).unwrap(), 4);
+        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
+        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[11, 12]);
         assert_eq!(&buf, &[7, 8, 9, 10]);
     }
