@@ -268,6 +268,9 @@ fn hash<R: Read>(key: &[u8; 32], data: &mut R) -> Result<Hash, std::io::Error> {
 //********************************************************************************
 // TODO: this dumps the key+nonce to the stream, is not secure at all
 //********************************************************************************
+// 8Kb encryption frame buffer
+const CHUNK_SIZE: usize = 8 * 1024;
+
 struct Encrypter<R> {
     reader: R,
     stream: Stream<Push>,
@@ -280,8 +283,7 @@ impl<R: Read> Encrypter<R> {
         let fkey = gen_key();
         let (stream, header) = Stream::init_push(&fkey).unwrap();
 
-        // 8Kb encryption frame buffer
-        let mut out_buf = Vec::with_capacity(16 * 1024);
+        let mut out_buf = Vec::with_capacity(CHUNK_SIZE);
 
         // Flush fkey + header to out_buf
         out_buf.extend_from_slice(&fkey.0);
@@ -298,16 +300,113 @@ impl<R: Read> Encrypter<R> {
 
 impl<R: Read> Read for Encrypter<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // Steps:
-        // 1. Flush data in out_buf into buf first
-        // 2. Read till there is 16Kb of data in in_buf
-        // 3. Encrypt it to out_buf
-        // 4. go to 1
-
-
-        Ok(0)
+        encrypt_read(
+            &mut self.reader,
+            &mut self.out_buf,
+            buf,
+        )
     }
 }
+
+
+fn encrypt_read<R: Read>(
+    data: &mut R,
+    out_buf: &mut Vec<u8>,
+    buf: &mut [u8]
+) -> std::io::Result<usize> {
+    let mut buf_write: usize = 0;
+
+    // 1. If buf_write == buf.len() return
+    while buf_write < buf.len() {
+        if !out_buf.is_empty() {
+            // 2. If data in out_buf, flush into buf first
+            buf_write += flush_buf(out_buf, &mut buf[buf_write..]);
+
+        } else {
+            let mut in_buf: [u8; CHUNK_SIZE] = [0; CHUNK_SIZE];
+
+            // 3. Read till there is 8Kb of data in in_buf
+            match fill_buf(data, &mut in_buf) {
+                Ok((true, in_len)) => {
+                    // 4a. Final read, finalize
+                    out_buf.extend_from_slice(
+                        &in_buf[..in_len]
+                    );
+                },
+                Ok((false, in_len)) => {
+                    // 4b. Copy in_buf -> out_buf
+                    out_buf.extend_from_slice(
+                        &in_buf[..in_len]
+                    );
+                },
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    Ok(buf_write)
+}
+
+#[cfg(test)]
+mod test_encrypt_read {
+    use super::*;
+
+    #[test]
+    fn big_buf_small_vec() {
+        let mut in_buf: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(fill_buf(&mut in_buf, &mut buf).unwrap(), (true, 2));
+        assert_eq!(&buf, &[1, 2, 0, 0]);
+    }
+}
+
+
+fn fill_buf<R: Read>(data: &mut R, buf: &mut [u8]) -> std::io::Result<(bool, usize)> {
+    let mut buf_read = 0;
+
+    while buf_read < buf.len() {
+        match data.read(&mut buf[buf_read..]) {
+            Ok(0)  => return Ok((true, buf_read)),
+            Ok(x)  => buf_read += x,
+            Err(e) => return Err(e),
+        };
+    }
+    Ok((false, buf_read))
+}
+
+#[cfg(test)]
+mod test_fill_buf {
+    use super::*;
+
+    #[test]
+    fn big_buf_small_vec() {
+        let mut in_buf: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(fill_buf(&mut in_buf, &mut buf).unwrap(), (true, 2));
+        assert_eq!(&buf, &[1, 2, 0, 0]);
+    }
+
+    #[test]
+    fn small_buf_big_vec() {
+        let mut in_buf: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4]);
+        let mut buf: [u8; 2] = [0; 2];
+
+        assert_eq!(fill_buf(&mut in_buf, &mut buf).unwrap(), (false, 2));
+        assert_eq!(&buf, &[1, 2]);
+    }
+
+    #[test]
+    fn same_buf_same_vec() {
+        let mut in_buf: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4]);
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(fill_buf(&mut in_buf, &mut buf).unwrap(), (false, 4));
+        assert_eq!(&buf, &[1, 2, 3, 4]);
+    }
+}
+
 
 fn flush_buf(in_buf: &mut Vec<u8>, buf: &mut [u8]) -> usize {
     // 1. Grab slice [0...min(buf.len(), in_buf.len()))
@@ -321,7 +420,7 @@ fn flush_buf(in_buf: &mut Vec<u8>, buf: &mut [u8]) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
+mod test_flush_buf {
     use super::*;
 
     #[test]
@@ -352,6 +451,17 @@ mod tests {
         assert_eq!(flush_buf(&mut in_buf, &mut buf), 4);
         assert_eq!(&buf, &[1, 2, 3, 4]);
         assert_eq!(&in_buf[..], &[]);
+    }
+
+    #[test]
+    fn one_buf_two_vec() {
+        let mut in_buf1: Vec<u8> = vec![1, 2];
+        let mut in_buf2: Vec<u8> = vec![3, 4];
+        let mut buf: [u8; 4] = [0; 4];
+
+        assert_eq!(flush_buf(&mut in_buf1, &mut buf), 2);
+        assert_eq!(flush_buf(&mut in_buf2, &mut buf[2..]), 2);
+        assert_eq!(&buf, &[1, 2, 3, 4]);
     }
 }
 
