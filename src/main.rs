@@ -307,7 +307,8 @@ impl<R: Read> Read for Encrypter<R> {
     }
 }
 
-
+// TODO: do i need to figure out a frame format for each message
+// for the decryption end?
 fn encrypt_read<R: Read>(
     data: &mut R,
     out_buf: &mut Vec<u8>,
@@ -319,12 +320,8 @@ fn encrypt_read<R: Read>(
     // 1. If buf_write == buf.len() return
     while buf_write < buf.len() {
         if !out_buf.is_empty() {
-            println!("buf_write: {}, buf_len: {}", buf_write, buf.len());
-
             // 2. If data in out_buf, flush into buf first
             buf_write += flush_buf(out_buf, &mut buf[buf_write..]);
-
-            println!("buf_write: {}, buf_len: {}", buf_write, buf.len());
 
         } else {
             let mut in_buf: [u8; CHUNK_SIZE] = [0; CHUNK_SIZE];
@@ -349,7 +346,7 @@ fn encrypt_read<R: Read>(
                             None,
                             Tag::Final,
                             out_buf,
-                        ).unwrap()
+                        ).unwrap();
                     }
                 },
                 Ok((false, in_len)) => {
@@ -368,7 +365,7 @@ fn encrypt_read<R: Read>(
                             None,
                             Tag::Message,
                             out_buf,
-                        ).unwrap()
+                        ).unwrap();
                     }
                 },
                 Err(e) => return Err(e),
@@ -382,6 +379,45 @@ fn encrypt_read<R: Read>(
 #[cfg(test)]
 mod test_encrypt_read {
     use super::*;
+
+    #[test]
+    fn small_data_roundtrip() {
+        let data = b"Hello World!";
+
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
+        in_data.write(data).unwrap();
+        in_data.set_position(0);
+
+        let mut enc = Encrypter::new(in_data);
+
+        // Read out to buffer vec
+        let mut dkey: [u8; 32] = [0; 32];
+        let mut dheader: [u8; 24] = [0; 24];
+        let mut dciphertext = Vec::new();
+
+        enc.read_exact(&mut dkey).unwrap();
+        enc.read_exact(&mut dheader).unwrap();
+        enc.read_to_end(&mut dciphertext).unwrap();
+
+        assert_ne!(data, &dciphertext[..]);
+
+        // Construct the decrypter and pass the ciphertext through
+        let fkey = Key::from_slice(&dkey).unwrap();
+        let fheader = Header::from_slice(&dheader).unwrap();
+
+        let mut dec = Stream::init_pull(&fheader, &fkey).unwrap();
+        let (dec_data, tag) = dec.pull(&dciphertext[..], None).unwrap();
+
+        assert_eq!(tag, Tag::Final);
+        assert_eq!(dec_data, data);
+    }
+
+    #[test]
+    fn big_data_roundtrip() {
+        // TODO: implement
+        // Make the input data bigger than the frame size so its forced to split
+        // into 2 message, then decrypt both message and check the result.
+    }
 
     #[test]
     #[cfg_attr(not(feature = "copy-test"), ignore)]
