@@ -14,7 +14,6 @@ use serde::Deserialize;
 mod backend_mem;
 use crate::backend_mem::Backend;
 
-use sodiumoxide::crypto::secretbox;
 use sodiumoxide::crypto::secretstream::{gen_key, Stream, Tag, Push, Header, Key, ABYTES, Pull};
 
 
@@ -158,34 +157,17 @@ fn main() {
         s_file.seek(SeekFrom::Start(0)).unwrap();
 
         {
-            let mut comp = Encoder::new(
+            let comp = Encoder::new(
                 &mut s_file,
                 21
             ).unwrap();
 
-            let mut vec_comp = Vec::new();
-            copy(&mut comp, &mut vec_comp).unwrap();
-            comp.finish();
-
             // Encrypt the stream
-            let fkey = secretbox::gen_key();
-            let fnonce = secretbox::gen_nonce();
+            let mut enc = Encrypter::new(comp);
 
-            let ciphertext = secretbox::seal(
-                &vec_comp[..],
-                &fnonce,
-                &fkey
-            );
-
-            // Write to the backend
+            // Stream the data into the backend
             let mut write_to = backend.write("INDEX.sqlite.zst").unwrap();
-
-            // Write the key and nonce to the stream
-            write_to.write_all(&fkey.0).unwrap();
-            write_to.write_all(&fnonce.0).unwrap();
-
-            let mut cursor = Cursor::new(ciphertext);
-            copy(&mut cursor, &mut write_to).unwrap();
+            copy(&mut enc, &mut write_to).unwrap();
         }
     }
 
@@ -450,6 +432,7 @@ mod test_encrypt_decrypt_roundtrip {
     use super::*;
 
     #[test]
+    #[cfg_attr(feature = "copy-test", ignore)]
     fn small_data_roundtrip() {
         let data = b"Hello World!";
 
@@ -469,6 +452,7 @@ mod test_encrypt_decrypt_roundtrip {
     }
 
     #[test]
+    #[cfg_attr(feature = "copy-test", ignore)]
     fn big_data_roundtrip() {
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
@@ -503,6 +487,7 @@ mod test_encrypt_read {
     use super::*;
 
     #[test]
+    #[cfg_attr(feature = "copy-test", ignore)]
     fn small_data_roundtrip() {
         let data = b"Hello World!";
 
@@ -535,6 +520,7 @@ mod test_encrypt_read {
     }
 
     #[test]
+    #[cfg_attr(feature = "copy-test", ignore)]
     fn big_data_roundtrip() {
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
