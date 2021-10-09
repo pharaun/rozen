@@ -15,7 +15,7 @@ mod backend_mem;
 use crate::backend_mem::Backend;
 
 use sodiumoxide::crypto::secretbox;
-use sodiumoxide::crypto::secretstream::{gen_key, Stream, Tag, Push, Header, Key};
+use sodiumoxide::crypto::secretstream::{gen_key, Stream, Tag, Push, Header, Key, ABYTES};
 
 
 // Configuration
@@ -282,7 +282,8 @@ impl<R: Read> Encrypter<R> {
         let fkey = gen_key();
         let (stream, header) = Stream::init_push(&fkey).unwrap();
 
-        let mut out_buf = Vec::with_capacity(CHUNK_SIZE);
+        // Chunk Frame size + encryption additional bytes (~17 bytes)
+        let mut out_buf = Vec::with_capacity(CHUNK_SIZE + ABYTES);
 
         // Flush fkey + header to out_buf
         out_buf.extend_from_slice(&fkey.0);
@@ -414,9 +415,58 @@ mod test_encrypt_read {
 
     #[test]
     fn big_data_roundtrip() {
-        // TODO: implement
-        // Make the input data bigger than the frame size so its forced to split
-        // into 2 message, then decrypt both message and check the result.
+        let data: Vec<u8> = {
+            let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
+
+            let mut ret: Vec<u8> = Vec::with_capacity(cap);
+            let data = b"Hello World!";
+
+            for _ in 0..(cap / data.len()) {
+                ret.extend_from_slice(&data[..]);
+            }
+
+            ret
+        };
+        let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
+
+        let mut enc = Encrypter::new(in_data);
+
+        // Read out to buffer vec
+        let mut dkey: [u8; 32] = [0; 32];
+        enc.read_exact(&mut dkey).unwrap();
+        let fkey = Key::from_slice(&dkey).unwrap();
+
+        let mut dheader: [u8; 24] = [0; 24];
+        enc.read_exact(&mut dheader).unwrap();
+        let fheader = Header::from_slice(&dheader).unwrap();
+
+        // Decrypter setup
+        let mut dec = Stream::init_pull(&fheader, &fkey).unwrap();
+
+        // TODO: improve? For now chunk it by chunk+abytes
+        let mut dciphertext1: [u8; CHUNK_SIZE + ABYTES] = [0; CHUNK_SIZE + ABYTES];
+        let mut dciphertext2 = Vec::new();
+
+        enc.read_exact(&mut dciphertext1).unwrap();
+        enc.read_to_end(&mut dciphertext2).unwrap();
+
+        assert_ne!(data, &dciphertext1[..]);
+        assert_ne!(data, &dciphertext2[..]);
+
+        // decrypt each 'chunk' and verify
+        let (dec_data1, tag1) = dec.pull(&dciphertext1, None).unwrap();
+        assert_eq!(tag1, Tag::Message);
+
+        let (dec_data2, tag2) = dec.pull(&dciphertext2[..], None).unwrap();
+        assert_eq!(tag2, Tag::Final);
+
+        // Assert data
+        let mut dec_data = Vec::new();
+        dec_data.extend_from_slice(&dec_data1[..]);
+        dec_data.extend_from_slice(&dec_data2[..]);
+
+        // TODO: split data and assert against each
+        assert_eq!(dec_data, data);
     }
 
     #[test]
