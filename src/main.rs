@@ -15,7 +15,7 @@ mod backend_mem;
 use crate::backend_mem::Backend;
 
 use sodiumoxide::crypto::secretbox;
-use sodiumoxide::crypto::secretstream::{gen_key, Stream, Tag, Push, Header, Key, ABYTES};
+use sodiumoxide::crypto::secretstream::{gen_key, Stream, Tag, Push, Header, Key, ABYTES, Pull};
 
 
 // Configuration
@@ -121,25 +121,17 @@ fn main() {
                                     // Streaming compressor
                                     file_data.seek(SeekFrom::Start(0)).unwrap();
 
-                                    let mut comp = Encoder::new(
+                                    let comp = Encoder::new(
                                         &mut file_data,
                                         21
                                     ).unwrap();
 
-                                    // Dump compressed data into memory for encryption
-                                    let mut vec_comp = Vec::new();
-                                    copy(&mut comp, &mut vec_comp).unwrap();
-                                    // Can't move this into encryption cuz comp.finish
-                                    comp.finish();
+                                    // Encrypt the stream
+                                    let mut enc = Encrypter::new(comp);
 
                                     // Stream the data into the backend
                                     let mut write_to = backend.write(content_hash.as_str()).unwrap();
-
-                                    // Encrypt the stream
-                                    insecure_encrypt(
-                                        &vec_comp[..],
-                                        &mut write_to
-                                    ).unwrap();
+                                    copy(&mut enc, &mut write_to).unwrap();
 
                                     // Load file info into index
                                     file_stmt.execute(rs::params![
@@ -200,43 +192,29 @@ fn main() {
     println!("\nARCHIVE Dump");
     for k in backend.list_keys().unwrap() {
         let mut read_from = backend.read(&k).unwrap();
-
-        let plaintext = insecure_decrypt(
-            &mut read_from
-        ).unwrap();
-
-        let len = plaintext.len();
-
-        // Validate the hash now.
-        let mut cursor = Cursor::new(plaintext);
-        let mut dec = Decoder::new(&mut cursor).unwrap();
-        let content_hash = hash(&key.0, &mut dec).unwrap();
+        let mut dec = Decrypter::new(&mut read_from).unwrap();
+        let mut und = Decoder::new(&mut dec).unwrap();
+        let content_hash = hash(&key.0, &mut und).unwrap();
 
         match Hash::from_hex(k.clone()) {
             Ok(data_hash) => {
                 let is_same = data_hash == content_hash;
 
-                println!("SAME: {:5} SIZE: {:5}, NAME: {}", is_same, len, k);
+                println!("SAME: {:5} SIZE: {:5}, NAME: {}", is_same, "-----", k);
             },
             Err(_) => {
-                println!("SAME: {:5} SIZE: {:5}, NAME: {}", "----", len, k);
+                println!("SAME: {:5} SIZE: {:5}, NAME: {}", "----", "-----", k);
             },
         }
     }
 
     // Grab db out of backend and put it to a temp handle
     let mut index_content = backend.read("INDEX.sqlite.zst").unwrap();
-
-    let plaintext = insecure_decrypt(
-        &mut index_content
-    ).unwrap();
-
-    // Setup decompression stream
-    let mut cursor = Cursor::new(plaintext);
-    let mut dec = Decoder::new(&mut cursor).unwrap();
+    let mut dec = Decrypter::new(&mut index_content).unwrap();
+    let mut und = Decoder::new(&mut dec).unwrap();
 
     let (mut d_file, d_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
-    copy(&mut dec, &mut d_file).unwrap();
+    copy(&mut und, &mut d_file).unwrap();
     let conn = Connection::open(&d_path).unwrap();
 
     // Dump the sqlite db data so we can view what it is
@@ -277,6 +255,12 @@ struct Encrypter<R> {
     out_buf: Vec<u8>,
 }
 
+struct Decrypter<R> {
+    reader: R,
+    stream: Stream<Pull>,
+    out_buf: Vec<u8>,
+}
+
 impl<R: Read> Encrypter<R> {
     fn new(reader: R) -> Self {
         let fkey = gen_key();
@@ -297,9 +281,45 @@ impl<R: Read> Encrypter<R> {
     }
 }
 
+impl<R: Read> Decrypter<R> {
+    fn new(mut reader: R) -> std::io::Result<Self> {
+        // Read out the key + header
+        let mut dkey: [u8; 32] = [0; 32];
+        reader.read_exact(&mut dkey)?;
+        let fkey = Key::from_slice(&dkey).unwrap();
+
+        let mut dheader: [u8; 24] = [0; 24];
+        reader.read_exact(&mut dheader)?;
+        let fheader = Header::from_slice(&dheader).unwrap();
+
+        // Decrypter setup
+        let stream = Stream::init_pull(&fheader, &fkey).unwrap();
+
+        // Chunk Frame size (input will be frame+abytes)
+        let out_buf = Vec::with_capacity(CHUNK_SIZE);
+
+        Ok(Decrypter {
+            reader,
+            stream,
+            out_buf,
+        })
+    }
+}
+
 impl<R: Read> Read for Encrypter<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         encrypt_read(
+            &mut self.reader,
+            &mut self.out_buf,
+            &mut self.stream,
+            buf,
+        )
+    }
+}
+
+impl<R: Read> Read for Decrypter<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        decrypt_read(
             &mut self.reader,
             &mut self.out_buf,
             &mut self.stream,
@@ -376,6 +396,107 @@ fn encrypt_read<R: Read>(
 
     Ok(buf_write)
 }
+
+
+fn decrypt_read<R: Read>(
+    data: &mut R,
+    out_buf: &mut Vec<u8>,
+    stream: &mut Stream<Pull>,
+    buf: &mut [u8]
+) -> std::io::Result<usize> {
+    let mut buf_write: usize = 0;
+
+    // 1. If buf_write == buf.len() return
+    while buf_write < buf.len() {
+        if !out_buf.is_empty() {
+            // 2. If data in out_buf, flush into buf first
+            buf_write += flush_buf(out_buf, &mut buf[buf_write..]);
+
+        } else {
+            let mut in_buf: [u8; CHUNK_SIZE + ABYTES] = [0; CHUNK_SIZE + ABYTES];
+
+            // 3. Read till there is 8Kb of data in in_buf
+            match fill_buf(data, &mut in_buf) {
+                // 4a. Nothing left in out_buf and is EoF, exit
+                Ok((true, 0)) => return Ok(buf_write),
+                Ok((true, in_len)) => {
+                    // 4b. Final read, finalize
+                    let tag = stream.pull_to_vec(
+                        &in_buf[..in_len],
+                        None,
+                        out_buf,
+                    ).unwrap();
+                    // TODO: assert tag is Tag::Final
+                },
+                Ok((false, in_len)) => {
+                    // 4c. Copy in_buf -> out_buf
+                    let tag = stream.pull_to_vec(
+                        &in_buf[..in_len],
+                        None,
+                        out_buf,
+                    ).unwrap();
+                    // TODO: assert tag is Tag::Message
+                },
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    Ok(buf_write)
+}
+
+#[cfg(test)]
+mod test_encrypt_decrypt_roundtrip {
+    use super::*;
+
+    #[test]
+    fn small_data_roundtrip() {
+        let data = b"Hello World!";
+
+        let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
+        in_data.write(data).unwrap();
+        in_data.set_position(0);
+
+        let enc = Encrypter::new(in_data);
+        let mut dec = Decrypter::new(enc).unwrap();
+
+        let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
+        copy(&mut dec, &mut out_data).unwrap();
+        out_data.set_position(0);
+
+        // Assertions
+        assert_eq!(&out_data.get_ref()[..], data);
+    }
+
+    #[test]
+    fn big_data_roundtrip() {
+        let data: Vec<u8> = {
+            let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
+
+            let mut ret: Vec<u8> = Vec::with_capacity(cap);
+            let data = b"Hello World!";
+
+            for _ in 0..(cap / data.len()) {
+                ret.extend_from_slice(&data[..]);
+            }
+
+            ret
+        };
+        let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
+
+        let enc = Encrypter::new(in_data);
+        let mut dec = Decrypter::new(enc).unwrap();
+
+        let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
+        copy(&mut dec, &mut out_data).unwrap();
+        out_data.set_position(0);
+
+        // Assertions
+        assert_eq!(&out_data.get_ref()[..], data);
+    }
+}
+
+
 
 #[cfg(test)]
 mod test_encrypt_read {
@@ -689,45 +810,4 @@ mod test_flush_buf {
         assert_eq!(flush_buf(&mut in_buf2, &mut buf[2..]), 2);
         assert_eq!(&buf, &[1, 2, 3, 4]);
     }
-}
-
-
-
-
-fn insecure_encrypt<W: Write>(data: &[u8], output: &mut W) -> std::io::Result<()> {
-    // Generate the key + nonce
-    let fkey = secretbox::gen_key();
-    let fnonce = secretbox::gen_nonce();
-
-    let ciphertext = secretbox::seal(data, &fnonce, &fkey);
-
-    // Write the key and nonce to the stream
-    output.write_all(&fkey.0)?;
-    output.write_all(&fnonce.0)?;
-    output.write_all(&ciphertext)?;
-
-    Ok(())
-}
-
-fn insecure_decrypt<R: Read>(data: &mut R) -> std::io::Result<Vec<u8>> {
-    // Decrypt the stream
-    // read the key then nonce then stream
-    let mut dkey: [u8; 32] = [0; 32];
-    let mut dnonce: [u8; 24] = [0; 24];
-    let mut dciphertext = Vec::new();
-
-    data.read_exact(&mut dkey)?;
-    data.read_exact(&mut dnonce)?;
-    data.read_to_end(&mut dciphertext)?;
-
-    let fkey = secretbox::Key::from_slice(&dkey).unwrap();
-    let fnonce = secretbox::Nonce::from_slice(&dnonce).unwrap();
-
-    let plaintext = secretbox::open(
-        &dciphertext[..],
-        &fnonce,
-        &fkey
-    ).unwrap();
-
-    Ok(plaintext)
 }
