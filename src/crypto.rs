@@ -20,101 +20,82 @@ pub fn gen_key() -> Key {
 // 8Kb encryption frame buffer
 const CHUNK_SIZE: usize = 8 * 1024;
 
-pub struct Encrypter<R> {
+pub struct Crypter<R, E> {
     reader: R,
-    engine: EncEngine,
+    engine: E,
+    in_buf: Box<[u8]>,
     out_buf: Vec<u8>,
 }
 
-pub struct Decrypter<R> {
-    reader: R,
-    engine: DecEngine,
-    out_buf: Vec<u8>,
-}
+pub fn encrypt<R: Read>(reader: R) -> Crypter<R, EncEngine> {
+    let fkey = gen_key();
+    let (stream, header) = Stream::init_push(&fkey).unwrap();
+    let engine = EncEngine(stream);
 
-impl<R: Read> Encrypter<R> {
-    pub fn new(reader: R) -> Self {
-        let fkey = gen_key();
-        let (stream, header) = Stream::init_push(&fkey).unwrap();
-        let engine = EncEngine(stream);
+    // Chunk Frame size + encryption additional bytes (~17 bytes)
+    let in_buf = [0u8; CHUNK_SIZE];
+    let mut out_buf = Vec::with_capacity(CHUNK_SIZE + ABYTES);
 
-        // Chunk Frame size + encryption additional bytes (~17 bytes)
-        let mut out_buf = Vec::with_capacity(CHUNK_SIZE + ABYTES);
+    // Flush fkey + header to out_buf
+    out_buf.extend_from_slice(&fkey.0);
+    out_buf.extend_from_slice(&header.0);
 
-        // Flush fkey + header to out_buf
-        out_buf.extend_from_slice(&fkey.0);
-        out_buf.extend_from_slice(&header.0);
-
-        Encrypter {
-            reader,
-            engine,
-            out_buf,
-        }
+    Crypter {
+        reader,
+        engine,
+        in_buf: Box::new(in_buf),
+        out_buf,
     }
 }
 
-impl<R: Read> Decrypter<R> {
-    pub fn new(mut reader: R) -> std::io::Result<Self> {
-        // Read out the key + header
-        let mut dkey: [u8; 32] = [0; 32];
-        reader.read_exact(&mut dkey)?;
-        let fkey = Key::from_slice(&dkey).unwrap();
+pub fn decrypt<R: Read>(mut reader: R) -> std::io::Result<Crypter<R, DecEngine>> {
+    // Read out the key + header
+    let mut dkey: [u8; 32] = [0; 32];
+    reader.read_exact(&mut dkey)?;
+    let fkey = Key::from_slice(&dkey).unwrap();
 
-        let mut dheader: [u8; 24] = [0; 24];
-        reader.read_exact(&mut dheader)?;
-        let fheader = Header::from_slice(&dheader).unwrap();
+    let mut dheader: [u8; 24] = [0; 24];
+    reader.read_exact(&mut dheader)?;
+    let fheader = Header::from_slice(&dheader).unwrap();
 
-        // Decrypter setup
-        let stream = Stream::init_pull(&fheader, &fkey).unwrap();
-        let engine = DecEngine(stream);
+    // Decrypter setup
+    let stream = Stream::init_pull(&fheader, &fkey).unwrap();
+    let engine = DecEngine(stream);
 
-        // Chunk Frame size (input will be frame+abytes)
-        let out_buf = Vec::with_capacity(CHUNK_SIZE);
+    // Chunk Frame size (input will be frame+abytes)
+    let in_buf = [0u8; CHUNK_SIZE + ABYTES];
+    let out_buf = Vec::with_capacity(CHUNK_SIZE);
 
-        Ok(Decrypter {
-            reader,
-            engine,
-            out_buf,
-        })
-    }
+    Ok(Crypter {
+        reader,
+        engine,
+        in_buf: Box::new(in_buf),
+        out_buf,
+    })
 }
 
-impl<R: Read> Read for Encrypter<R> {
+
+impl<R: Read, E: Engine> Read for Crypter<R, E> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut in_buf = [0u8; CHUNK_SIZE];
-
         crypt_read(
             &mut self.reader,
             &mut self.out_buf,
             &mut self.engine,
-            &mut in_buf,
+            &mut self.in_buf,
             buf,
         )
     }
 }
 
-impl<R: Read> Read for Decrypter<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut in_buf = [0u8; CHUNK_SIZE + ABYTES];
-
-        crypt_read(
-            &mut self.reader,
-            &mut self.out_buf,
-            &mut self.engine,
-            &mut in_buf,
-            buf,
-        )
-    }
-}
 
 
 // Trait for wrapping up the encryption/decryption portion of the code
-trait Engine {
+pub trait Engine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()>;
 }
 
-struct EncEngine(Stream<Push>);
-struct DecEngine(Stream<Pull>);
+pub struct EncEngine(Stream<Push>);
+pub struct DecEngine(Stream<Pull>);
 
 impl Engine for EncEngine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
@@ -201,8 +182,8 @@ mod test_encrypt_decrypt_roundtrip {
         in_data.write(data).unwrap();
         in_data.set_position(0);
 
-        let enc = Encrypter::new(in_data);
-        let mut dec = Decrypter::new(enc).unwrap();
+        let enc = encrypt(in_data);
+        let mut dec = decrypt(enc).unwrap();
 
         let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         copy(&mut dec, &mut out_data).unwrap();
@@ -228,8 +209,8 @@ mod test_encrypt_decrypt_roundtrip {
         };
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let enc = Encrypter::new(in_data);
-        let mut dec = Decrypter::new(enc).unwrap();
+        let enc = encrypt(in_data);
+        let mut dec = decrypt(enc).unwrap();
 
         let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         copy(&mut dec, &mut out_data).unwrap();
@@ -264,7 +245,7 @@ mod test_crypt_read {
         in_data.write(data).unwrap();
         in_data.set_position(0);
 
-        let mut enc = Encrypter::new(in_data);
+        let mut enc = encrypt(in_data);
 
         // Read out to buffer vec
         let mut dkey: [u8; 32] = [0; 32];
@@ -304,7 +285,7 @@ mod test_crypt_read {
         };
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let mut enc = Encrypter::new(in_data);
+        let mut enc = encrypt(in_data);
 
         // Read out to buffer vec
         let mut dkey: [u8; 32] = [0; 32];
