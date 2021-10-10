@@ -22,13 +22,13 @@ const CHUNK_SIZE: usize = 8 * 1024;
 
 pub struct Encrypter<R> {
     reader: R,
-    stream: Stream<Push>,
+    engine: EncEngine,
     out_buf: Vec<u8>,
 }
 
 pub struct Decrypter<R> {
     reader: R,
-    stream: Stream<Pull>,
+    engine: DecEngine,
     out_buf: Vec<u8>,
 }
 
@@ -36,6 +36,7 @@ impl<R: Read> Encrypter<R> {
     pub fn new(reader: R) -> Self {
         let fkey = gen_key();
         let (stream, header) = Stream::init_push(&fkey).unwrap();
+        let engine = EncEngine(stream);
 
         // Chunk Frame size + encryption additional bytes (~17 bytes)
         let mut out_buf = Vec::with_capacity(CHUNK_SIZE + ABYTES);
@@ -46,7 +47,7 @@ impl<R: Read> Encrypter<R> {
 
         Encrypter {
             reader,
-            stream,
+            engine,
             out_buf,
         }
     }
@@ -65,13 +66,14 @@ impl<R: Read> Decrypter<R> {
 
         // Decrypter setup
         let stream = Stream::init_pull(&fheader, &fkey).unwrap();
+        let engine = DecEngine(stream);
 
         // Chunk Frame size (input will be frame+abytes)
         let out_buf = Vec::with_capacity(CHUNK_SIZE);
 
         Ok(Decrypter {
             reader,
-            stream,
+            engine,
             out_buf,
         })
     }
@@ -79,10 +81,13 @@ impl<R: Read> Decrypter<R> {
 
 impl<R: Read> Read for Encrypter<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        encrypt_read(
+        let mut in_buf = [0u8; CHUNK_SIZE];
+
+        crypt_read(
             &mut self.reader,
             &mut self.out_buf,
-            &mut self.stream,
+            &mut self.engine,
+            &mut in_buf,
             buf,
         )
     }
@@ -90,21 +95,59 @@ impl<R: Read> Read for Encrypter<R> {
 
 impl<R: Read> Read for Decrypter<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        decrypt_read(
+        let mut in_buf = [0u8; CHUNK_SIZE + ABYTES];
+
+        crypt_read(
             &mut self.reader,
             &mut self.out_buf,
-            &mut self.stream,
+            &mut self.engine,
+            &mut in_buf,
             buf,
         )
     }
 }
 
+
+// Trait for wrapping up the encryption/decryption portion of the code
+trait Engine {
+    fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()>;
+}
+
+struct EncEngine(Stream<Push>);
+struct DecEngine(Stream<Pull>);
+
+impl Engine for EncEngine {
+    fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
+        self.0.push_to_vec(data, None, tag, out).unwrap();
+
+        // TODO: improve error
+        Ok(())
+    }
+}
+
+impl Engine for DecEngine {
+    fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
+        let dtag = self.0.pull_to_vec(data, None, out).unwrap();
+
+        // TODO: improve error
+        if dtag == tag {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+}
+
+
+
+
 // TODO: do i need to figure out a frame format for each message
 // for the decryption end?
-fn encrypt_read<R: Read>(
+fn crypt_read<R: Read, E: Engine>(
     data: &mut R,
     out_buf: &mut Vec<u8>,
-    stream: &mut Stream<Push>,
+    engine: &mut E,
+    in_buf: &mut [u8],
     buf: &mut [u8]
 ) -> std::io::Result<usize> {
     let mut buf_write: usize = 0;
@@ -116,49 +159,25 @@ fn encrypt_read<R: Read>(
             buf_write += flush_buf(out_buf, &mut buf[buf_write..]);
 
         } else {
-            let mut in_buf: [u8; CHUNK_SIZE] = [0; CHUNK_SIZE];
-
             // 3. Read till there is 8Kb of data in in_buf
-            match fill_buf(data, &mut in_buf) {
+            match fill_buf(data, in_buf) {
                 // 4a. Nothing left in out_buf and is EoF, exit
                 Ok((true, 0)) => return Ok(buf_write),
                 Ok((true, in_len)) => {
                     // 4b. Final read, finalize
-                    #[cfg(feature = "copy-test")]
-                    {
-                        // Testing only code
-                        out_buf.extend_from_slice(
-                            &in_buf[..in_len]
-                        );
-                    }
-                    #[cfg(not(feature = "copy-test"))]
-                    {
-                        stream.push_to_vec(
-                            &in_buf[..in_len],
-                            None,
-                            Tag::Final,
-                            out_buf,
-                        ).unwrap();
-                    }
+                    engine.crypt(
+                        &in_buf[..in_len],
+                        Tag::Final,
+                        out_buf,
+                    ).unwrap();
                 },
                 Ok((false, in_len)) => {
                     // 4c. Copy in_buf -> out_buf
-                    #[cfg(feature = "copy-test")]
-                    {
-                        // Testing only code
-                        out_buf.extend_from_slice(
-                            &in_buf[..in_len]
-                        );
-                    }
-                    #[cfg(not(feature = "copy-test"))]
-                    {
-                        stream.push_to_vec(
-                            &in_buf[..in_len],
-                            None,
-                            Tag::Message,
-                            out_buf,
-                        ).unwrap();
-                    }
+                    engine.crypt(
+                        &in_buf[..in_len],
+                        Tag::Message,
+                        out_buf,
+                    ).unwrap();
                 },
                 Err(e) => return Err(e),
             }
@@ -168,53 +187,6 @@ fn encrypt_read<R: Read>(
     Ok(buf_write)
 }
 
-
-fn decrypt_read<R: Read>(
-    data: &mut R,
-    out_buf: &mut Vec<u8>,
-    stream: &mut Stream<Pull>,
-    buf: &mut [u8]
-) -> std::io::Result<usize> {
-    let mut buf_write: usize = 0;
-
-    // 1. If buf_write == buf.len() return
-    while buf_write < buf.len() {
-        if !out_buf.is_empty() {
-            // 2. If data in out_buf, flush into buf first
-            buf_write += flush_buf(out_buf, &mut buf[buf_write..]);
-
-        } else {
-            let mut in_buf: [u8; CHUNK_SIZE + ABYTES] = [0; CHUNK_SIZE + ABYTES];
-
-            // 3. Read till there is 8Kb of data in in_buf
-            match fill_buf(data, &mut in_buf) {
-                // 4a. Nothing left in out_buf and is EoF, exit
-                Ok((true, 0)) => return Ok(buf_write),
-                Ok((true, in_len)) => {
-                    // 4b. Final read, finalize
-                    let tag = stream.pull_to_vec(
-                        &in_buf[..in_len],
-                        None,
-                        out_buf,
-                    ).unwrap();
-                    // TODO: assert tag is Tag::Final
-                },
-                Ok((false, in_len)) => {
-                    // 4c. Copy in_buf -> out_buf
-                    let tag = stream.pull_to_vec(
-                        &in_buf[..in_len],
-                        None,
-                        out_buf,
-                    ).unwrap();
-                    // TODO: assert tag is Tag::Message
-                },
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
-    Ok(buf_write)
-}
 
 #[cfg(test)]
 mod test_encrypt_decrypt_roundtrip {
@@ -222,7 +194,6 @@ mod test_encrypt_decrypt_roundtrip {
     use super::*;
 
     #[test]
-    #[cfg_attr(feature = "copy-test", ignore)]
     fn small_data_roundtrip() {
         let data = b"Hello World!";
 
@@ -242,7 +213,6 @@ mod test_encrypt_decrypt_roundtrip {
     }
 
     #[test]
-    #[cfg_attr(feature = "copy-test", ignore)]
     fn big_data_roundtrip() {
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
@@ -273,12 +243,20 @@ mod test_encrypt_decrypt_roundtrip {
 
 
 #[cfg(test)]
-mod test_encrypt_read {
+mod test_crypt_read {
     use std::io::{Cursor, Write};
     use super::*;
 
+    // Struct just for copying data
+    struct CopyEngine();
+    impl Engine for CopyEngine {
+        fn crypt(&mut self, data: &[u8], _tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
+            out.extend_from_slice(&data);
+            Ok(())
+        }
+    }
+
     #[test]
-    #[cfg_attr(feature = "copy-test", ignore)]
     fn small_data_roundtrip() {
         let data = b"Hello World!";
 
@@ -311,7 +289,6 @@ mod test_encrypt_read {
     }
 
     #[test]
-    #[cfg_attr(feature = "copy-test", ignore)]
     fn big_data_roundtrip() {
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
@@ -368,118 +345,118 @@ mod test_encrypt_read {
     }
 
     #[test]
-    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn empty_data_empty_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         let mut out_buf: Vec<u8> = Vec::new();
         let mut buf: [u8; 4] = [0; 4];
 
-        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 0);
+        let mut engine = CopyEngine();
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 0);
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[0, 0, 0, 0]);
     }
 
     #[test]
-    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn empty_data_small_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         let mut out_buf: Vec<u8> = vec![1, 2];
         let mut buf: [u8; 4] = [0; 4];
 
-        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 2);
+        let mut engine = CopyEngine();
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 2);
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[1, 2, 0, 0]);
     }
 
     #[test]
-    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn empty_data_big_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         let mut out_buf: Vec<u8> = vec![1, 2, 3, 4, 5, 6];
         let mut buf: [u8; 4] = [0; 4];
 
-        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
+        let mut engine = CopyEngine();
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[5, 6]);
         assert_eq!(&buf, &[1, 2, 3, 4]);
     }
 
     #[test]
-    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn small_data_empty_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
         let mut out_buf: Vec<u8> = Vec::new();
         let mut buf: [u8; 4] = [0; 4];
 
-        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 2);
+        let mut engine = CopyEngine();
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 2);
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[1, 2, 0, 0]);
     }
 
     #[test]
-    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn small_data_small_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
         let mut out_buf: Vec<u8> = vec![3, 4];
         let mut buf: [u8; 4] = [0; 4];
 
-        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
+        let mut engine = CopyEngine();
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[3, 4, 1, 2]);
     }
 
     #[test]
-    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn small_data_big_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2]);
         let mut out_buf: Vec<u8> = vec![3, 4, 5, 6, 7, 8];
         let mut buf: [u8; 4] = [0; 4];
 
-        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
+        let mut engine = CopyEngine();
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[7, 8]);
         assert_eq!(&buf, &[3, 4, 5, 6]);
     }
 
     #[test]
-    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn big_data_empty_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4, 5, 6]);
         let mut out_buf: Vec<u8> = Vec::new();
         let mut buf: [u8; 4] = [0; 4];
 
-        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
+        let mut engine = CopyEngine();
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[5, 6]);
         assert_eq!(&buf, &[1, 2, 3, 4]);
     }
 
     #[test]
-    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn big_data_small_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4, 5, 6]);
         let mut out_buf: Vec<u8> = vec![7, 8];
         let mut buf: [u8; 4] = [0; 4];
 
-        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
+        let mut engine = CopyEngine();
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[3, 4, 5, 6]);
         assert_eq!(&buf, &[7, 8, 1, 2]);
     }
 
     #[test]
-    #[cfg_attr(not(feature = "copy-test"), ignore)]
     fn big_data_big_out_buf() {
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![1, 2, 3, 4, 5, 6]);
         let mut out_buf: Vec<u8> = vec![7, 8, 9, 10, 11, 12];
         let mut buf: [u8; 4] = [0; 4];
 
-        let (mut stream, _) = Stream::init_push(&gen_key()).unwrap();
-        assert_eq!(encrypt_read(&mut in_data, &mut out_buf, &mut stream, &mut buf).unwrap(), 4);
+        let mut engine = CopyEngine();
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
         assert_eq!(&out_buf[..], &[11, 12]);
         assert_eq!(&buf, &[7, 8, 9, 10]);
     }
