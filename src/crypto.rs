@@ -92,6 +92,7 @@ impl<R: Read, E: Engine> Read for Crypter<R, E> {
 // Trait for wrapping up the encryption/decryption portion of the code
 pub trait Engine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()>;
+    fn is_finalized(&self) -> bool;
 }
 
 pub struct EncEngine(Stream<Push>);
@@ -100,15 +101,21 @@ pub struct DecEngine(Stream<Pull>);
 impl Engine for EncEngine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
         self.0.push_to_vec(data, None, tag, out).unwrap();
+        println!("Enc: in-Len: {}, out-len: {}, tag: {:#?}", data.len(), out.len(), tag);
 
         // TODO: improve error
         Ok(())
+    }
+
+    fn is_finalized(&self) -> bool {
+        self.0.is_finalized()
     }
 }
 
 impl Engine for DecEngine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
         let dtag = self.0.pull_to_vec(data, None, out).unwrap();
+        println!("Dec: in-Len: {}, out-len: {}, tag: {:#?}", data.len(), out.len(), tag);
 
         // TODO: improve error
         if dtag == tag {
@@ -116,6 +123,10 @@ impl Engine for DecEngine {
         } else {
             Err(())
         }
+    }
+
+    fn is_finalized(&self) -> bool {
+        self.0.is_finalized()
     }
 }
 
@@ -142,24 +153,36 @@ fn crypt_read<R: Read, E: Engine>(
         } else {
             // 3. Read till there is 8Kb of data in in_buf
             match fill_buf(data, in_buf) {
-                // 4a. Nothing left in out_buf and is EoF, exit
-                Ok((true, 0)) => return Ok(buf_write),
+                // 4a. Nothing left in in_buf, is EoF, and is not finalize, finalize
+                Ok((true, 0)) if !engine.is_finalized() => {
+                    engine.crypt(
+                        &[],
+                        Tag::Final,
+                        out_buf,
+                    ).unwrap();
+                },
+
+                // 4b. Nothing left in [in_buf, out_buf] and is EoF, exit
+                Ok((true, 0)) if out_buf.is_empty() => return Ok(buf_write),
+
+                // 4c. Final read, finalize
                 Ok((true, in_len)) => {
-                    // 4b. Final read, finalize
                     engine.crypt(
                         &in_buf[..in_len],
                         Tag::Final,
                         out_buf,
                     ).unwrap();
                 },
+
+                // 4d. Copy in_buf -> out_buf
                 Ok((false, in_len)) => {
-                    // 4c. Copy in_buf -> out_buf
                     engine.crypt(
                         &in_buf[..in_len],
                         Tag::Message,
                         out_buf,
                     ).unwrap();
                 },
+
                 Err(e) => return Err(e),
             }
         }
@@ -191,6 +214,36 @@ mod test_encrypt_decrypt_roundtrip {
 
         // Assertions
         assert_eq!(&out_data.get_ref()[..], data);
+    }
+
+    #[test]
+    fn exactly_chunk_roundtrip() {
+        let data: Vec<u8> = {
+            let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
+
+            let mut ret: Vec<u8> = Vec::with_capacity(cap);
+            let data = b"Hello World!";
+
+            for _ in 0..(cap / data.len()) {
+                ret.extend_from_slice(&data[..]);
+            }
+
+            ret[..CHUNK_SIZE].to_vec()
+        };
+        assert_eq!(data.len(), CHUNK_SIZE);
+
+        let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
+
+        let enc = encrypt(in_data);
+        let mut dec = decrypt(enc).unwrap();
+
+        let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
+        copy(&mut dec, &mut out_data).unwrap();
+        out_data.set_position(0);
+
+        // Assertions
+        assert_eq!(&out_data.get_ref()[..], data);
+        assert_eq!(true, false);
     }
 
     #[test]
@@ -234,6 +287,9 @@ mod test_crypt_read {
         fn crypt(&mut self, data: &[u8], _tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
             out.extend_from_slice(&data);
             Ok(())
+        }
+        fn is_finalized(&self) -> bool {
+            true
         }
     }
 
@@ -323,6 +379,49 @@ mod test_crypt_read {
 
         // TODO: split data and assert against each
         assert_eq!(dec_data, data);
+    }
+
+    #[test]
+    fn awkward_write_final_buf() {
+        let data: Vec<u8> = {
+            let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
+
+            let mut ret: Vec<u8> = Vec::with_capacity(cap);
+            let data = b"Hello World!";
+
+            for _ in 0..(cap / data.len()) {
+                ret.extend_from_slice(&data[..]);
+            }
+
+            ret[..CHUNK_SIZE].to_vec()
+        };
+        assert_eq!(data.len(), CHUNK_SIZE);
+
+        let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
+
+        let mut enc = encrypt(in_data);
+
+        // Do awkward reads to see if the control loop breaks down
+        let mut dkey: [u8; 32] = [0; 32];
+        let mut dheader: [u8; 24] = [0; 24];
+        let mut dciphertext1_half: [u8; CHUNK_SIZE / 2] = [0; CHUNK_SIZE / 2];
+        let mut dciphertext1_abyt: [u8; CHUNK_SIZE / 2 + ABYTES] = [0; CHUNK_SIZE / 2 + ABYTES];
+
+        // Final should be 17 bytes but let's break it into 2 read of 8 and 9 bytes
+        let mut dciphertext2_read8: [u8; 8] = [0; 8];
+        let mut dciphertext2_read9: [u8; 9] = [0; 9];
+
+        enc.read_exact(&mut dkey).unwrap();
+        enc.read_exact(&mut dheader).unwrap();
+        enc.read_exact(&mut dciphertext1_half).unwrap();
+        enc.read_exact(&mut dciphertext1_abyt).unwrap();
+
+        let mut dciphertext2 = Vec::new();
+        enc.read_to_end(&mut dciphertext2).unwrap();
+        println!("len: {}", dciphertext2.len());
+
+        enc.read_exact(&mut dciphertext2_read8).unwrap();
+        enc.read_exact(&mut dciphertext2_read9).unwrap();
     }
 
     #[test]
