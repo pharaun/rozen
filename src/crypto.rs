@@ -5,18 +5,14 @@ use sodiumoxide::crypto::secretstream;
 use sodiumoxide::crypto::secretstream::{Stream, Tag, Push, Header, Key, ABYTES, Pull};
 
 
-pub fn init() {
-    sodiumoxide::init().unwrap();
+pub fn init() -> Result<(), &'static str> {
+    sodiumoxide::init().map_err(|_| "sodiumoxide init failed")
 }
 
 pub fn gen_key() -> Key {
     secretstream::gen_key()
 }
 
-
-//********************************************************************************
-// TODO: this dumps the key+nonce to the stream, is not secure at all
-//********************************************************************************
 // 8Kb encryption frame buffer
 const CHUNK_SIZE: usize = 8 * 1024;
 
@@ -27,17 +23,15 @@ pub struct Crypter<R, E> {
     out_buf: Vec<u8>,
 }
 
-pub fn encrypt<R: Read>(reader: R) -> Crypter<R, EncEngine> {
-    let fkey = gen_key();
-    let (stream, header) = Stream::init_push(&fkey).unwrap();
+pub fn encrypt<R: Read>(key: &Key, reader: R) -> Crypter<R, EncEngine> {
+    let (stream, header) = Stream::init_push(&key).unwrap();
     let engine = EncEngine(stream);
 
     // Chunk Frame size + encryption additional bytes (~17 bytes)
     let in_buf = [0u8; CHUNK_SIZE];
     let mut out_buf = Vec::with_capacity(CHUNK_SIZE + ABYTES);
 
-    // Flush fkey + header to out_buf
-    out_buf.extend_from_slice(&fkey.0);
+    // Flush header to out_buf
     out_buf.extend_from_slice(&header.0);
 
     Crypter {
@@ -48,18 +42,14 @@ pub fn encrypt<R: Read>(reader: R) -> Crypter<R, EncEngine> {
     }
 }
 
-pub fn decrypt<R: Read>(mut reader: R) -> std::io::Result<Crypter<R, DecEngine>> {
-    // Read out the key + header
-    let mut dkey: [u8; 32] = [0; 32];
-    reader.read_exact(&mut dkey)?;
-    let fkey = Key::from_slice(&dkey).unwrap();
-
+pub fn decrypt<R: Read>(key: &Key, mut reader: R) -> std::io::Result<Crypter<R, DecEngine>> {
+    // Read out the header
     let mut dheader: [u8; 24] = [0; 24];
     reader.read_exact(&mut dheader)?;
     let fheader = Header::from_slice(&dheader).unwrap();
 
     // Decrypter setup
-    let stream = Stream::init_pull(&fheader, &fkey).unwrap();
+    let stream = Stream::init_pull(&fheader, &key).unwrap();
     let engine = DecEngine(stream);
 
     // Chunk Frame size (input will be frame+abytes)
@@ -193,14 +183,15 @@ mod test_encrypt_decrypt_roundtrip {
 
     #[test]
     fn small_data_roundtrip() {
+        let key = gen_key();
         let data = b"Hello World!";
 
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         in_data.write(data).unwrap();
         in_data.set_position(0);
 
-        let enc = encrypt(in_data);
-        let mut dec = decrypt(enc).unwrap();
+        let enc = encrypt(&key, in_data);
+        let mut dec = decrypt(&key, enc).unwrap();
 
         let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         copy(&mut dec, &mut out_data).unwrap();
@@ -212,6 +203,7 @@ mod test_encrypt_decrypt_roundtrip {
 
     #[test]
     fn exactly_chunk_roundtrip() {
+        let key = gen_key();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -228,8 +220,8 @@ mod test_encrypt_decrypt_roundtrip {
 
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let enc = encrypt(in_data);
-        let mut dec = decrypt(enc).unwrap();
+        let enc = encrypt(&key, in_data);
+        let mut dec = decrypt(&key, enc).unwrap();
 
         let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         copy(&mut dec, &mut out_data).unwrap();
@@ -241,6 +233,7 @@ mod test_encrypt_decrypt_roundtrip {
 
     #[test]
     fn big_data_roundtrip() {
+        let key = gen_key();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -255,8 +248,8 @@ mod test_encrypt_decrypt_roundtrip {
         };
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let enc = encrypt(in_data);
-        let mut dec = decrypt(enc).unwrap();
+        let enc = encrypt(&key, in_data);
+        let mut dec = decrypt(&key, enc).unwrap();
 
         let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         copy(&mut dec, &mut out_data).unwrap();
@@ -288,30 +281,28 @@ mod test_crypt_read {
 
     #[test]
     fn small_data_roundtrip() {
+        let key = gen_key();
         let data = b"Hello World!";
 
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
         in_data.write(data).unwrap();
         in_data.set_position(0);
 
-        let mut enc = encrypt(in_data);
+        let mut enc = encrypt(&key, in_data);
 
         // Read out to buffer vec
-        let mut dkey: [u8; 32] = [0; 32];
         let mut dheader: [u8; 24] = [0; 24];
         let mut dciphertext = Vec::new();
 
-        enc.read_exact(&mut dkey).unwrap();
         enc.read_exact(&mut dheader).unwrap();
         enc.read_to_end(&mut dciphertext).unwrap();
 
         assert_ne!(data, &dciphertext[..]);
 
         // Construct the decrypter and pass the ciphertext through
-        let fkey = Key::from_slice(&dkey).unwrap();
         let fheader = Header::from_slice(&dheader).unwrap();
 
-        let mut dec = Stream::init_pull(&fheader, &fkey).unwrap();
+        let mut dec = Stream::init_pull(&fheader, &key).unwrap();
         let (dec_data, tag) = dec.pull(&dciphertext[..], None).unwrap();
 
         assert_eq!(tag, Tag::Final);
@@ -320,6 +311,7 @@ mod test_crypt_read {
 
     #[test]
     fn big_data_roundtrip() {
+        let key = gen_key();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -334,19 +326,15 @@ mod test_crypt_read {
         };
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let mut enc = encrypt(in_data);
+        let mut enc = encrypt(&key, in_data);
 
         // Read out to buffer vec
-        let mut dkey: [u8; 32] = [0; 32];
-        enc.read_exact(&mut dkey).unwrap();
-        let fkey = Key::from_slice(&dkey).unwrap();
-
         let mut dheader: [u8; 24] = [0; 24];
         enc.read_exact(&mut dheader).unwrap();
         let fheader = Header::from_slice(&dheader).unwrap();
 
         // Decrypter setup
-        let mut dec = Stream::init_pull(&fheader, &fkey).unwrap();
+        let mut dec = Stream::init_pull(&fheader, &key).unwrap();
 
         // TODO: improve? For now chunk it by chunk+abytes
         let mut dciphertext1: [u8; CHUNK_SIZE + ABYTES] = [0; CHUNK_SIZE + ABYTES];
@@ -376,6 +364,7 @@ mod test_crypt_read {
 
     #[test]
     fn awkward_write_final_buf() {
+        let key = gen_key();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -392,10 +381,9 @@ mod test_crypt_read {
 
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let mut enc = encrypt(in_data);
+        let mut enc = encrypt(&key, in_data);
 
         // Do awkward reads to see if the control loop breaks down
-        let mut dkey: [u8; 32] = [0; 32];
         let mut dheader: [u8; 24] = [0; 24];
         let mut dciphertext1_half: [u8; CHUNK_SIZE / 2] = [0; CHUNK_SIZE / 2];
         let mut dciphertext1_abyt: [u8; CHUNK_SIZE / 2 + ABYTES] = [0; CHUNK_SIZE / 2 + ABYTES];
@@ -404,8 +392,6 @@ mod test_crypt_read {
         let mut dciphertext2_read8: [u8; 8] = [0; 8];
         let mut dciphertext2_read9: [u8; 9] = [0; 9];
 
-        // 32 bytes
-        enc.read_exact(&mut dkey).unwrap();
         // 24 bytes
         enc.read_exact(&mut dheader).unwrap();
         // w/ 8192 -> 4096 bytes

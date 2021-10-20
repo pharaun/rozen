@@ -125,7 +125,7 @@ fn main() {
                                     ).unwrap();
 
                                     // Encrypt the stream
-                                    let mut enc = crypto::encrypt(comp);
+                                    let mut enc = crypto::encrypt(&key, comp);
 
                                     // Stream the data into the backend
                                     let mut write_to = backend.write(content_hash.as_str()).unwrap();
@@ -162,7 +162,7 @@ fn main() {
             ).unwrap();
 
             // Encrypt the stream
-            let mut enc = crypto::encrypt(comp);
+            let mut enc = crypto::encrypt(&key, comp);
 
             // Stream the data into the backend
             let mut write_to = backend.write("INDEX.sqlite.zst").unwrap();
@@ -173,7 +173,7 @@ fn main() {
     println!("\nARCHIVE Dump");
     for k in backend.list_keys().unwrap() {
         let mut read_from = backend.read(&k).unwrap();
-        let mut dec = crypto::decrypt(&mut read_from).unwrap();
+        let mut dec = crypto::decrypt(&key, &mut read_from).unwrap();
         let mut und = Decoder::new(&mut dec).unwrap();
         let content_hash = hash(&key.0, &mut und).unwrap();
 
@@ -191,7 +191,7 @@ fn main() {
 
     // Grab db out of backend and put it to a temp handle
     let mut index_content = backend.read("INDEX.sqlite.zst").unwrap();
-    let mut dec = crypto::decrypt(&mut index_content).unwrap();
+    let mut dec = crypto::decrypt(&key, &mut index_content).unwrap();
     let mut und = Decoder::new(&mut dec).unwrap();
 
     let (mut d_file, d_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
