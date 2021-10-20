@@ -126,7 +126,7 @@ fn main() {
                                     ).unwrap();
 
                                     // Encrypt the stream
-                                    let mut enc = crypto::encrypt(&key, comp);
+                                    let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                     // Stream the data into the backend
                                     let mut write_to = backend.write(content_hash.as_str()).unwrap();
@@ -163,7 +163,7 @@ fn main() {
             ).unwrap();
 
             // Encrypt the stream
-            let mut enc = crypto::encrypt(&key, comp);
+            let mut enc = crypto::encrypt(&key, comp).unwrap();
 
             // Stream the data into the backend
             let mut write_to = backend.write("INDEX.sqlite.zst").unwrap();

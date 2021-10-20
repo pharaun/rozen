@@ -30,3 +30,6 @@ serde = { version = "1.0", features = ["derive"] }
 
 # VFS layer for in memory and later on-disk VFS backend
 vfs = "0.5.1"
+
+# Error layer for handling error creation
+thiserror = "1.0"

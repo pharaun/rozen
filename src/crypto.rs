@@ -1,20 +1,43 @@
 use std::cmp;
 use std::io::Read;
 
+use thiserror::Error;
+
 use sodiumoxide::crypto::secretstream;
 use sodiumoxide::crypto::secretstream::{Stream, Tag, Push, Header, Key, ABYTES, Pull};
 
 
-pub fn init() -> Result<(), &'static str> {
-    sodiumoxide::init().map_err(|_| "sodiumoxide init failed")
+// 8Kb encryption frame buffer
+const CHUNK_SIZE: usize = 8 * 1024;
+
+
+#[derive(Error, Debug)]
+pub enum CryptoError {
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
+    #[error("sodiumoxide init failed")]
+    InitError,
+    #[error("sodiumoxide init_push failed")]
+    InitPushError,
+    #[error("sodiumoxide init_pull failed")]
+    InitPullError,
+    #[error("sodiumoxide header parse failed")]
+    HeaderError,
+    #[error("sodiumoxide encryption failed")]
+    EncryptionError,
+    #[error("sodiumoxide decryption failed")]
+    DecryptionError,
+}
+
+type CResult<T> = Result<T, CryptoError>;
+
+pub fn init() -> CResult<()> {
+    sodiumoxide::init().map_err(|_| CryptoError::InitError)
 }
 
 pub fn gen_key() -> Key {
     secretstream::gen_key()
 }
-
-// 8Kb encryption frame buffer
-const CHUNK_SIZE: usize = 8 * 1024;
 
 pub struct Crypter<R, E> {
     reader: R,
@@ -23,8 +46,8 @@ pub struct Crypter<R, E> {
     out_buf: Vec<u8>,
 }
 
-pub fn encrypt<R: Read>(key: &Key, reader: R) -> Crypter<R, EncEngine> {
-    let (stream, header) = Stream::init_push(&key).unwrap();
+pub fn encrypt<R: Read>(key: &Key, reader: R) -> CResult<Crypter<R, EncEngine>> {
+    let (stream, header) = Stream::init_push(&key).map_err(|_| CryptoError::InitPushError)?;
     let engine = EncEngine(stream);
 
     // Chunk Frame size + encryption additional bytes (~17 bytes)
@@ -34,22 +57,22 @@ pub fn encrypt<R: Read>(key: &Key, reader: R) -> Crypter<R, EncEngine> {
     // Flush header to out_buf
     out_buf.extend_from_slice(&header.0);
 
-    Crypter {
+    Ok(Crypter {
         reader,
         engine,
         in_buf: Box::new(in_buf),
         out_buf,
-    }
+    })
 }
 
-pub fn decrypt<R: Read>(key: &Key, mut reader: R) -> std::io::Result<Crypter<R, DecEngine>> {
+pub fn decrypt<R: Read>(key: &Key, mut reader: R) -> CResult<Crypter<R, DecEngine>> {
     // Read out the header
     let mut dheader: [u8; 24] = [0; 24];
     reader.read_exact(&mut dheader)?;
-    let fheader = Header::from_slice(&dheader).unwrap();
+    let fheader = Header::from_slice(&dheader).ok_or(CryptoError::HeaderError)?;
 
     // Decrypter setup
-    let stream = Stream::init_pull(&fheader, &key).unwrap();
+    let stream = Stream::init_pull(&fheader, &key).map_err(|_| CryptoError::InitPullError)?;
     let engine = DecEngine(stream);
 
     // Chunk Frame size (input will be frame+abytes)
@@ -64,7 +87,6 @@ pub fn decrypt<R: Read>(key: &Key, mut reader: R) -> std::io::Result<Crypter<R, 
     })
 }
 
-
 impl<R: Read, E: Engine> Read for Crypter<R, E> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         crypt_read(
@@ -73,15 +95,13 @@ impl<R: Read, E: Engine> Read for Crypter<R, E> {
             &mut self.engine,
             &mut self.in_buf,
             buf,
-        )
+        ).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 }
 
-
-
 // Trait for wrapping up the encryption/decryption portion of the code
 pub trait Engine {
-    fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()>;
+    fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> CResult<()>;
     fn is_finalized(&self) -> bool;
 }
 
@@ -89,12 +109,8 @@ pub struct EncEngine(Stream<Push>);
 pub struct DecEngine(Stream<Pull>);
 
 impl Engine for EncEngine {
-    fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
-        self.0.push_to_vec(data, None, tag, out).unwrap();
-        println!("Enc: in-Len: {}, out-len: {}, tag: {:#?}", data.len(), out.len(), tag);
-
-        // TODO: improve error
-        Ok(())
+    fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> CResult<()> {
+        self.0.push_to_vec(data, None, tag, out).map_err(|_| CryptoError::EncryptionError)
     }
 
     fn is_finalized(&self) -> bool {
@@ -103,25 +119,18 @@ impl Engine for EncEngine {
 }
 
 impl Engine for DecEngine {
-    fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
-        let dtag = self.0.pull_to_vec(data, None, out).unwrap();
-        println!("Dec: in-Len: {}, out-len: {}, tag: {:#?}", data.len(), out.len(), tag);
-
-        // TODO: improve error
-        if dtag == tag {
-            Ok(())
-        } else {
-            Err(())
-        }
+    fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> CResult<()> {
+        self.0.pull_to_vec(data, None, out).map_err(
+            |_| CryptoError::DecryptionError
+        ).and_then(
+            |dtag| if dtag == tag { Ok(()) } else { Err(CryptoError::DecryptionError) }
+        )
     }
 
     fn is_finalized(&self) -> bool {
         self.0.is_finalized()
     }
 }
-
-
-
 
 // TODO: do i need to figure out a frame format for each message
 // for the decryption end?
@@ -131,7 +140,7 @@ fn crypt_read<R: Read, E: Engine>(
     engine: &mut E,
     in_buf: &mut [u8],
     buf: &mut [u8]
-) -> std::io::Result<usize> {
+) -> CResult<usize> {
     let mut buf_write: usize = 0;
 
     // 1. If buf_write == buf.len() return
@@ -149,7 +158,7 @@ fn crypt_read<R: Read, E: Engine>(
                         &[],
                         Tag::Final,
                         out_buf,
-                    ).unwrap();
+                    )?;
                 },
 
                 // 4b. Nothing left in [in_buf, out_buf] and is EoF, exit
@@ -164,15 +173,38 @@ fn crypt_read<R: Read, E: Engine>(
                         &in_buf[..in_len],
                         tag,
                         out_buf,
-                    ).unwrap();
+                    )?;
                 },
 
-                Err(e) => return Err(e),
+                Err(e) => return Err(CryptoError::IOError(e)),
             }
         }
     }
-
     Ok(buf_write)
+}
+
+fn fill_buf<R: Read>(data: &mut R, buf: &mut [u8]) -> std::io::Result<(bool, usize)> {
+    let mut buf_read = 0;
+
+    while buf_read < buf.len() {
+        match data.read(&mut buf[buf_read..]) {
+            Ok(0)  => return Ok((true, buf_read)),
+            Ok(x)  => buf_read += x,
+            Err(e) => return Err(e),
+        };
+    }
+    Ok((false, buf_read))
+}
+
+fn flush_buf(in_buf: &mut Vec<u8>, buf: &mut [u8]) -> usize {
+    // 1. Grab slice [0...min(buf.len(), in_buf.len()))
+    let split_at = cmp::min(in_buf.len(), buf.len());
+    // 2. Copy into buf
+    buf[..split_at].clone_from_slice(&in_buf[..split_at]);
+    // 3. Drop range from &mut in_buf
+    in_buf.drain(..split_at);
+
+    split_at
 }
 
 
@@ -190,7 +222,7 @@ mod test_encrypt_decrypt_roundtrip {
         in_data.write(data).unwrap();
         in_data.set_position(0);
 
-        let enc = encrypt(&key, in_data);
+        let enc = encrypt(&key, in_data).unwrap();
         let mut dec = decrypt(&key, enc).unwrap();
 
         let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
@@ -220,7 +252,7 @@ mod test_encrypt_decrypt_roundtrip {
 
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let enc = encrypt(&key, in_data);
+        let enc = encrypt(&key, in_data).unwrap();
         let mut dec = decrypt(&key, enc).unwrap();
 
         let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
@@ -248,7 +280,7 @@ mod test_encrypt_decrypt_roundtrip {
         };
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let enc = encrypt(&key, in_data);
+        let enc = encrypt(&key, in_data).unwrap();
         let mut dec = decrypt(&key, enc).unwrap();
 
         let mut out_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
@@ -260,8 +292,6 @@ mod test_encrypt_decrypt_roundtrip {
     }
 }
 
-
-
 #[cfg(test)]
 mod test_crypt_read {
     use std::io::{Cursor, Write};
@@ -270,7 +300,7 @@ mod test_crypt_read {
     // Struct just for copying data
     struct CopyEngine();
     impl Engine for CopyEngine {
-        fn crypt(&mut self, data: &[u8], _tag: Tag, out: &mut Vec<u8>) -> Result<(), ()> {
+        fn crypt(&mut self, data: &[u8], _tag: Tag, out: &mut Vec<u8>) -> CResult<()> {
             out.extend_from_slice(&data);
             Ok(())
         }
@@ -288,7 +318,7 @@ mod test_crypt_read {
         in_data.write(data).unwrap();
         in_data.set_position(0);
 
-        let mut enc = encrypt(&key, in_data);
+        let mut enc = encrypt(&key, in_data).unwrap();
 
         // Read out to buffer vec
         let mut dheader: [u8; 24] = [0; 24];
@@ -326,7 +356,7 @@ mod test_crypt_read {
         };
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let mut enc = encrypt(&key, in_data);
+        let mut enc = encrypt(&key, in_data).unwrap();
 
         // Read out to buffer vec
         let mut dheader: [u8; 24] = [0; 24];
@@ -381,7 +411,7 @@ mod test_crypt_read {
 
         let in_data: Cursor<Vec<u8>> = Cursor::new(data.clone());
 
-        let mut enc = encrypt(&key, in_data);
+        let mut enc = encrypt(&key, in_data).unwrap();
 
         // Do awkward reads to see if the control loop breaks down
         let mut dheader: [u8; 24] = [0; 24];
@@ -522,20 +552,6 @@ mod test_crypt_read {
     }
 }
 
-
-fn fill_buf<R: Read>(data: &mut R, buf: &mut [u8]) -> std::io::Result<(bool, usize)> {
-    let mut buf_read = 0;
-
-    while buf_read < buf.len() {
-        match data.read(&mut buf[buf_read..]) {
-            Ok(0)  => return Ok((true, buf_read)),
-            Ok(x)  => buf_read += x,
-            Err(e) => return Err(e),
-        };
-    }
-    Ok((false, buf_read))
-}
-
 #[cfg(test)]
 mod test_fill_buf {
     use std::io::Cursor;
@@ -567,18 +583,6 @@ mod test_fill_buf {
         assert_eq!(fill_buf(&mut in_buf, &mut buf).unwrap(), (false, 4));
         assert_eq!(&buf, &[1, 2, 3, 4]);
     }
-}
-
-
-fn flush_buf(in_buf: &mut Vec<u8>, buf: &mut [u8]) -> usize {
-    // 1. Grab slice [0...min(buf.len(), in_buf.len()))
-    let split_at = cmp::min(in_buf.len(), buf.len());
-    // 2. Copy into buf
-    buf[..split_at].clone_from_slice(&in_buf[..split_at]);
-    // 3. Drop range from &mut in_buf
-    in_buf.drain(..split_at);
-
-    split_at
 }
 
 #[cfg(test)]
