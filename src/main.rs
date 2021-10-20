@@ -14,6 +14,7 @@ mod backend_mem;
 use crate::backend_mem::Backend;
 
 mod crypto;
+use sodiumoxide::crypto::secretstream::Key;
 
 
 // Configuration
@@ -112,7 +113,7 @@ fn main() {
 
                                     // Hasher
                                     let content_hash = hash(
-                                        &key.0,
+                                        &key,
                                         &mut file_data
                                     ).unwrap().to_hex().to_string();
 
@@ -175,7 +176,7 @@ fn main() {
         let mut read_from = backend.read(&k).unwrap();
         let mut dec = crypto::decrypt(&key, &mut read_from).unwrap();
         let mut und = Decoder::new(&mut dec).unwrap();
-        let content_hash = hash(&key.0, &mut und).unwrap();
+        let content_hash = hash(&key, &mut und).unwrap();
 
         match Hash::from_hex(k.clone()) {
             Ok(data_hash) => {
@@ -218,8 +219,8 @@ fn main() {
 }
 
 
-fn hash<R: Read>(key: &[u8; 32], data: &mut R) -> Result<Hash, std::io::Error> {
-    let mut hash = Hasher::new_keyed(&key);
+fn hash<R: Read>(key: &Key, data: &mut R) -> Result<Hash, std::io::Error> {
+    let mut hash = Hasher::new_keyed(&key.0);
     copy(data, &mut hash)?;
     Ok(hash.finalize())
 }
