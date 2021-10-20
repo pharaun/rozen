@@ -165,20 +165,14 @@ fn crypt_read<R: Read, E: Engine>(
                 // 4b. Nothing left in [in_buf, out_buf] and is EoF, exit
                 Ok((true, 0)) if out_buf.is_empty() => return Ok(buf_write),
 
-                // 4c. Final read, finalize
-                Ok((true, in_len)) => {
-                    engine.crypt(
-                        &in_buf[..in_len],
-                        Tag::Final,
-                        out_buf,
-                    ).unwrap();
-                },
+                // 4c. Copy in_buf -> out_buf
+                // 4d. Final read, finalize
+                Ok((eof, in_len)) => {
+                    let tag = if eof { Tag::Final } else { Tag::Message };
 
-                // 4d. Copy in_buf -> out_buf
-                Ok((false, in_len)) => {
                     engine.crypt(
                         &in_buf[..in_len],
-                        Tag::Message,
+                        tag,
                         out_buf,
                     ).unwrap();
                 },
@@ -243,7 +237,6 @@ mod test_encrypt_decrypt_roundtrip {
 
         // Assertions
         assert_eq!(&out_data.get_ref()[..], data);
-        assert_eq!(true, false);
     }
 
     #[test]
@@ -411,16 +404,17 @@ mod test_crypt_read {
         let mut dciphertext2_read8: [u8; 8] = [0; 8];
         let mut dciphertext2_read9: [u8; 9] = [0; 9];
 
+        // 32 bytes
         enc.read_exact(&mut dkey).unwrap();
+        // 24 bytes
         enc.read_exact(&mut dheader).unwrap();
+        // w/ 8192 -> 4096 bytes
         enc.read_exact(&mut dciphertext1_half).unwrap();
+        // w/ 8192 -> 4096 + 17 bytes
         enc.read_exact(&mut dciphertext1_abyt).unwrap();
-
-        let mut dciphertext2 = Vec::new();
-        enc.read_to_end(&mut dciphertext2).unwrap();
-        println!("len: {}", dciphertext2.len());
-
+        // 8 bytes (of 17 for final frame
         enc.read_exact(&mut dciphertext2_read8).unwrap();
+        // 9 bytes of 17 for final frame
         enc.read_exact(&mut dciphertext2_read9).unwrap();
     }
 
