@@ -151,9 +151,9 @@ fn crypt_read<R: Read, E: Engine>(
 
         } else {
             // 3. Read till there is 8Kb of data in in_buf
-            match fill_buf(data, in_buf) {
+            match fill_buf(data, in_buf)? {
                 // 4a. Nothing left in in_buf, is EoF, and is not finalize, finalize
-                Ok((true, 0)) if !engine.is_finalized() => {
+                (true, 0) if !engine.is_finalized() => {
                     engine.crypt(
                         &[],
                         Tag::Final,
@@ -162,11 +162,11 @@ fn crypt_read<R: Read, E: Engine>(
                 },
 
                 // 4b. Nothing left in [in_buf, out_buf] and is EoF, exit
-                Ok((true, 0)) if out_buf.is_empty() => return Ok(buf_write),
+                (true, 0) if out_buf.is_empty() => return Ok(buf_write),
 
                 // 4c. Copy in_buf -> out_buf
                 // 4d. Final read, finalize
-                Ok((eof, in_len)) => {
+                (eof, in_len) => {
                     let tag = if eof { Tag::Final } else { Tag::Message };
 
                     engine.crypt(
@@ -175,8 +175,6 @@ fn crypt_read<R: Read, E: Engine>(
                         out_buf,
                     )?;
                 },
-
-                Err(e) => return Err(CryptoError::IOError(e)),
             }
         }
     }
