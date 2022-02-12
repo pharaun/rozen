@@ -1,11 +1,8 @@
-use rusqlite as rs;
-
 use ignore::WalkBuilder;
 
 use std::io::{Seek, SeekFrom, copy, Read};
 use blake3::Hasher;
 use blake3::Hash;
-use rusqlite::Connection;
 use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
 use serde::Deserialize;
@@ -15,6 +12,8 @@ use crate::backend::mem::Backend;
 
 mod crypto;
 mod engine;
+mod index;
+use crate::index::Index;
 
 
 // Configuration
@@ -41,88 +40,6 @@ struct Source {
 enum SourceType {
     AppendOnly,
 }
-
-
-struct Index {
-    file: std::fs::File,
-    // Don't use this but we need to keep it around till we are done with the db
-    path: tempfile::TempPath,
-    conn: Connection,
-}
-
-impl Index {
-    fn new() -> Self {
-        let (file, path) = tempfile::NamedTempFile::new().unwrap().into_parts();
-        let conn = Connection::open(&path).unwrap();
-        // TODO: can't remove file path (sqlite seems to depend on it)
-        //s_path.close().unwrap();
-
-        // Setup the db
-        conn.execute_batch(
-            "BEGIN;
-             CREATE TABLE files (
-                path VARCHAR NOT NULL,
-                permission INTEGER NOT NULL,
-                content_hash VARCHAR NOT NULL
-             );
-             COMMIT;"
-        ).unwrap();
-
-        Index {
-            file,
-            path,
-            conn
-        }
-    }
-
-    // TODO: improve the types
-    fn insert_file(&self, path: &std::path::Path, hash: &str) {
-        let mut file_stmt = self.conn.prepare_cached(
-            "INSERT INTO files
-             (path, permission, content_hash)
-             VALUES
-             (?, ?, ?)"
-        ).unwrap();
-
-        // Load file into index
-        file_stmt.execute(rs::params![
-            format!("{}", path.display()),
-            0000,
-            hash,
-        ]).unwrap();
-    }
-
-    fn close(mut self) {
-        self.conn.close().unwrap();
-    }
-
-    fn unload(mut self) -> std::fs::File {
-        // Spool the sqlite file into the backend as index
-        self.conn.close().unwrap();
-        // TODO: not sure we need the seek here since we never touched this handle
-        self.file.seek(SeekFrom::Start(0)).unwrap();
-
-        self.file
-    }
-
-    fn load<R: Read>(reader: &mut R) -> Self {
-        let (mut file, path) = tempfile::NamedTempFile::new().unwrap().into_parts();
-
-        // Copy from filehandler to tempfile
-        copy(reader, &mut file).unwrap();
-
-        let conn = Connection::open(&path).unwrap();
-        // TODO: can't remove file path (sqlite seems to depend on it)
-        //s_path.close().unwrap();
-
-        Index {
-            file,
-            path,
-            conn
-        }
-    }
-}
-
 
 fn main() {
     crypto::init();
@@ -246,20 +163,10 @@ fn main() {
 
     // Dump the sqlite db data so we can view what it is
     println!("\nINDEX Dump");
-    {
-        let mut dump_stmt = index.conn.prepare(
-            "SELECT path, permission, content_hash FROM files"
-        ).unwrap();
-        let mut rows = dump_stmt.query([]).unwrap();
+    index.walk_files(|path, perm, hash| {
+        println!("HASH: {:?}, PERM: {:?}, PATH: {:?}", hash, perm, path);
+    });
 
-        while let Ok(Some(row)) = rows.next() {
-            let path: String = row.get(0).unwrap();
-            let perm: u32 = row.get(1).unwrap();
-            let hash: String = row.get(2).unwrap();
-
-            println!("HASH: {:?}, PERM: {:?}, PATH: {:?}", hash, perm, path);
-        }
-    }
     index.close();
 }
 
