@@ -4,8 +4,9 @@ use std::io::Read;
 use thiserror::Error;
 
 use sodiumoxide::crypto::secretstream;
-use sodiumoxide::crypto::secretstream::{Stream, Tag, Push, Header, Key, ABYTES, Pull};
+use sodiumoxide::crypto::secretstream::{Stream, Tag, Push, Header, ABYTES, Pull};
 
+pub use sodiumoxide::crypto::secretstream::Key as Key;
 
 // 8Kb encryption frame buffer
 const CHUNK_SIZE: usize = 8 * 1024;

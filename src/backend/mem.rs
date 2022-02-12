@@ -58,8 +58,8 @@ impl Backend for MemoryVFS {
 
 #[cfg(test)]
 mod tests {
-    use crate::backend_mem::MemoryVFS;
-    use crate::backend_mem::Backend;
+    use crate::backend::mem::MemoryVFS;
+    use crate::backend::mem::Backend;
 
     #[test]
     fn basic_read_write() {

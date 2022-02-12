@@ -10,11 +10,11 @@ use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
 use serde::Deserialize;
 
-mod backend_mem;
-use crate::backend_mem::Backend;
+mod backend;
+use crate::backend::mem::Backend;
 
 mod crypto;
-use sodiumoxide::crypto::secretstream::Key;
+mod engine;
 
 
 // Configuration
@@ -65,7 +65,7 @@ fn main() {
     let target = config.sources.get(0).unwrap().include.get(0).unwrap();
 
     // In memory backend for data storage
-    let mut backend = backend_mem::MemoryVFS::new();
+    let mut backend = backend::mem::MemoryVFS::new();
 
     {
         // Temp file for rusqlite
@@ -219,7 +219,7 @@ fn main() {
 }
 
 
-fn hash<R: Read>(key: &Key, data: &mut R) -> Result<Hash, std::io::Error> {
+fn hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
     let mut hash = Hasher::new_keyed(&key.0);
     copy(data, &mut hash)?;
     Ok(hash.finalize())
