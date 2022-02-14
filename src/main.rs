@@ -76,45 +76,45 @@ fn main() {
             .build(),
     );
 
-    let index = Index::new();
-    println!("\nARCHIVE Dump");
-    for k in backend.list_keys().unwrap() {
-        let mut read_from = backend.read(&k).unwrap();
-        let mut dec = crypto::decrypt(&key, &mut read_from).unwrap();
-        let mut und = Decoder::new(&mut dec).unwrap();
-        let content_hash = hash(&key, &mut und).unwrap();
-
-        match Hash::from_hex(k.clone()) {
-            Ok(data_hash) => {
-                let is_same = data_hash == content_hash;
-
-                println!("SAME: {:5} SIZE: {:5}, NAME: {}", is_same, "-----", k);
-            },
-            Err(_) => {
-                println!("SAME: {:5} SIZE: {:5}, NAME: {}", "----", "-----", k);
-            },
-        }
-    }
 
     // Grab db out of backend and put it to a temp handle
     let mut index_content = backend.read("INDEX.sqlite.zst").unwrap();
     let mut dec = crypto::decrypt(&key, &mut index_content).unwrap();
     let mut und = Decoder::new(&mut dec).unwrap();
-
     let index = Index::load(&mut und);
 
     // Dump the sqlite db data so we can view what it is
-    println!("\nINDEX Dump");
+    println!("\nINDEX Dump + ARCHIVE Dump");
     index.walk_files(|path, perm, hash| {
-        println!("HASH: {:?}, PERM: {:?}, PATH: {:?}", hash, perm, path);
-    });
+        println!("HASH: {:?}", hash);
+        println!("\tPERM: {:?}", perm);
+        println!("\tPATH: {:?}", path);
 
+        // Read from the backend
+        let mut read_from = backend.read(&hash).unwrap();
+        let mut dec = crypto::decrypt(&key, &mut read_from).unwrap();
+        let mut und = Decoder::new(&mut dec).unwrap();
+        let content_hash = test_hash(&key, &mut und).unwrap();
+
+        match Hash::from_hex(hash.clone()) {
+            Ok(data_hash) => {
+                let is_same = data_hash == content_hash;
+
+                println!("\tSAME: {:5}", is_same);
+                println!("\tSIZE: {:5}", "-----");
+            },
+            Err(_) => {
+                println!("\tSAME: {:5}", "-----");
+                println!("\tSIZE: {:5}", "-----");
+            },
+        }
+    });
     index.close();
 }
 
 
 // copy pasted into appendonly for now
-fn hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
+fn test_hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
     let mut hash = Hasher::new_keyed(&key.0);
     copy(data, &mut hash)?;
     Ok(hash.finalize())

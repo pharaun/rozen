@@ -52,9 +52,9 @@ impl Index {
         ]).unwrap();
     }
 
-    pub fn walk_files<F>(&self, f: F)
+    pub fn walk_files<F>(&self, mut f: F)
     where
-        F: Fn(&str, u32, &str)
+        F: FnMut(&str, u32, &str)
     {
         let mut dump_stmt = self.conn.prepare_cached(
             "SELECT path, permission, content_hash FROM files"
