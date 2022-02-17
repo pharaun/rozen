@@ -1,11 +1,12 @@
 use ignore::WalkBuilder;
 
-use std::io::{Seek, SeekFrom, copy, Read};
+use std::io::{copy, Read};
 use blake3::Hasher;
 use blake3::Hash;
-use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
 use serde::Deserialize;
+use chrono::Utc;
+use chrono::SecondsFormat;
 
 mod backend;
 use crate::backend::mem::Backend;
@@ -65,9 +66,11 @@ fn main() {
     // In memory backend for data storage
     let mut backend = backend::mem::MemoryVFS::new();
 
-    engine::append_only::archive(
+    let datetime = Utc::now();
+    engine::append_only::snapshot(
         &key,
         &mut backend,
+        datetime,
         WalkBuilder::new(target)
             .follow_links(config.symlink)
             .standard_filters(false)
@@ -76,9 +79,9 @@ fn main() {
             .build(),
     );
 
-
     // Grab db out of backend and put it to a temp handle
-    let mut index_content = backend.read("INDEX.sqlite.zst").unwrap();
+    let filename = format!("INDEX-{}.sqlite.zst", datetime.to_rfc3339_opts(SecondsFormat::Secs, true));
+    let mut index_content = backend.read(&filename).unwrap();
     let mut dec = crypto::decrypt(&key, &mut index_content).unwrap();
     let mut und = Decoder::new(&mut dec).unwrap();
     let index = Index::load(&mut und);
