@@ -245,3 +245,10 @@ Data Recovery
         - Main challenge is file names/duplicate file names....
         - Store multiple Index files?
     3. If all else fail should be able to gain access to the content itself
+
+Backup
+	1. Snapshot
+	2. Force new snapshot, resume existing
+	3. Fetch 1 or more file from a snapshot
+	4. Fetch whole snapshot
+	5. Diff/search through multiple snapshot for different version of a file. Ie “file is same in a-c snapshot, new file in d-e, not there in f-z”
