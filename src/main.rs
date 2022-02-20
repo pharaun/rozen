@@ -64,10 +64,10 @@ fn main() {
     let target = config.sources.get(0).unwrap().include.get(0).unwrap();
 
     // Build a s3 backend here
-    let mut backend = backend::s3::S3::new_endpoint("http://localhost:8333");
+    let mut backend = backend::s3::S3::new_endpoint("http://localhost:8333").unwrap();
 
     // In memory backend for data storage
-    let mut backend = backend::mem::MemoryVFS::new();
+    //let mut backend = backend::mem::MemoryVFS::new();
 
     let datetime = OffsetDateTime::now_utc();
     engine::append_only::snapshot(
@@ -85,7 +85,7 @@ fn main() {
     // Grab db out of backend and put it to a temp handle
     let dt_fmt = datetime.format(&Rfc3339).unwrap();
     let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
-    let mut index_content = backend.read(&filename).unwrap();
+    let mut index_content = Backend::read(&mut backend, &filename).unwrap();
     let mut dec = crypto::decrypt(&key, &mut index_content).unwrap();
     let mut und = Decoder::new(&mut dec).unwrap();
     let index = Index::load(&mut und);
@@ -98,7 +98,7 @@ fn main() {
         println!("\tPATH: {:?}", path);
 
         // Read from the backend
-        let mut read_from = backend.read(&hash).unwrap();
+        let mut read_from = Backend::read(&mut backend, &hash).unwrap();
         let mut dec = crypto::decrypt(&key, &mut read_from).unwrap();
         let mut und = Decoder::new(&mut dec).unwrap();
         let content_hash = test_hash(&key, &mut und).unwrap();

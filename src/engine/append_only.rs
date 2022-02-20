@@ -50,6 +50,8 @@ pub fn snapshot<B: Backend>(
                                 // Stream the data into the backend
                                 let mut write_to = backend.write(content_hash.as_str()).unwrap();
                                 copy(&mut enc, &mut write_to).unwrap();
+                                // TODO: Workaround bad s3 api impl
+                                write_to.flush();
 
                                 // Load file info into index
                                 index.insert_file(e.path(), content_hash.as_str());
@@ -80,6 +82,8 @@ pub fn snapshot<B: Backend>(
         println!("INDEX: {:?}", filename);
         let mut write_to = backend.write(&filename).unwrap();
         copy(&mut enc, &mut write_to).unwrap();
+        // TODO: Workaround bad s3 api impl
+        write_to.flush();
     }
 }
 
