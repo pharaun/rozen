@@ -2,9 +2,8 @@ use std::io::{Seek, SeekFrom, copy, Read};
 use blake3::Hasher;
 use blake3::Hash;
 use zstd::stream::read::Encoder;
-use chrono::Utc;
-use chrono::DateTime;
-use chrono::SecondsFormat;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 use crate::index::Index;
 use crate::crypto;
@@ -14,7 +13,7 @@ use crate::backend::mem::Backend;
 pub fn snapshot<B: Backend>(
     key: &crypto::Key,
     backend: &mut B,
-    datetime: DateTime<Utc>,
+    datetime: OffsetDateTime,
     walker: ignore::Walk,
 ) {
     let index = Index::new();
@@ -76,7 +75,8 @@ pub fn snapshot<B: Backend>(
         let mut enc = crypto::encrypt(&key, comp).unwrap();
 
         // Stream the data into the backend
-        let filename = format!("INDEX-{}.sqlite.zst", datetime.to_rfc3339_opts(SecondsFormat::Secs, true));
+        let dt_fmt = datetime.format(&Rfc3339).unwrap();
+        let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
         println!("INDEX: {:?}", filename);
         let mut write_to = backend.write(&filename).unwrap();
         copy(&mut enc, &mut write_to).unwrap();

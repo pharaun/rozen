@@ -5,8 +5,8 @@ use blake3::Hasher;
 use blake3::Hash;
 use zstd::stream::read::Decoder;
 use serde::Deserialize;
-use chrono::Utc;
-use chrono::SecondsFormat;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 mod backend;
 use crate::backend::mem::Backend;
@@ -66,7 +66,7 @@ fn main() {
     // In memory backend for data storage
     let mut backend = backend::mem::MemoryVFS::new();
 
-    let datetime = Utc::now();
+    let datetime = OffsetDateTime::now_utc();
     engine::append_only::snapshot(
         &key,
         &mut backend,
@@ -80,7 +80,8 @@ fn main() {
     );
 
     // Grab db out of backend and put it to a temp handle
-    let filename = format!("INDEX-{}.sqlite.zst", datetime.to_rfc3339_opts(SecondsFormat::Secs, true));
+    let dt_fmt = datetime.format(&Rfc3339).unwrap();
+    let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
     let mut index_content = backend.read(&filename).unwrap();
     let mut dec = crypto::decrypt(&key, &mut index_content).unwrap();
     let mut und = Decoder::new(&mut dec).unwrap();
