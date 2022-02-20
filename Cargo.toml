@@ -36,3 +36,9 @@ vfs = "0.5.1"
 
 # Error layer for handling error creation
 thiserror = "1.0"
+
+# S3 layer for the backend
+aws-config = "0.6.0"
+aws-sdk-s3 = "0.6.0"
+tokio = { version = "1", features = ["full"] }
+http = "*"

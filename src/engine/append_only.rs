@@ -7,7 +7,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::index::Index;
 use crate::crypto;
-use crate::backend::mem::Backend;
+use crate::backend::Backend;
 
 
 pub fn snapshot<B: Backend>(

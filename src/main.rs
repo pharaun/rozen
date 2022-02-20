@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 mod backend;
-use crate::backend::mem::Backend;
+use crate::backend::Backend;
 
 mod crypto;
 mod engine;
@@ -62,6 +62,9 @@ fn main() {
     println!("{:?}", config);
 
     let target = config.sources.get(0).unwrap().include.get(0).unwrap();
+
+    // Build a s3 backend here
+    let mut backend = backend::s3::S3::new_endpoint("http://localhost:8333");
 
     // In memory backend for data storage
     let mut backend = backend::mem::MemoryVFS::new();
