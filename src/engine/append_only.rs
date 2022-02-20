@@ -48,10 +48,7 @@ pub fn snapshot<B: Backend>(
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                 // Stream the data into the backend
-                                let mut write_to = backend.write(content_hash.as_str()).unwrap();
-                                copy(&mut enc, &mut write_to).unwrap();
-                                // TODO: Workaround bad s3 api impl
-                                write_to.flush();
+                                backend.write(content_hash.as_str(), &mut enc).unwrap();
 
                                 // Load file info into index
                                 index.insert_file(e.path(), content_hash.as_str());
@@ -80,10 +77,7 @@ pub fn snapshot<B: Backend>(
         let dt_fmt = datetime.format(&Rfc3339).unwrap();
         let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
         println!("INDEX: {:?}", filename);
-        let mut write_to = backend.write(&filename).unwrap();
-        copy(&mut enc, &mut write_to).unwrap();
-        // TODO: Workaround bad s3 api impl
-        write_to.flush();
+        backend.write(&filename, &mut enc).unwrap();
     }
 }
 

@@ -1,5 +1,5 @@
 use std::cmp;
-use std::io::{Read, Write, copy};
+use std::io::{Read, copy};
 use std::error::Error;
 use tokio::runtime::Runtime;
 use aws_sdk_s3::Client;
@@ -8,19 +8,15 @@ use aws_sdk_s3::ByteStream;
 use bytes::Buf;
 use http::Uri;
 
+// Single threaded but we are on one thread here for now
+use std::rc::Rc;
+
 use crate::backend::Backend;
 
 
 pub struct S3 {
-    client: Client,
-
-    // Runtime for the tokio reactor
-    rt: Runtime,
-
-    // Buffer for writes, very much shit impl
-    buf: Vec<u8>,
-    key: String,
-    done: bool,
+    client: Rc<Client>,
+    rt: Rc<Runtime>,
 }
 
 impl S3 {
@@ -33,11 +29,8 @@ impl S3 {
         let client = rt.block_on(connect(endpoint));
 
         Ok(S3 {
-            client,
-            rt,
-            buf: Vec::new(),
-            key: "".to_string(),
-            done: false,
+            client: Rc::new(client),
+            rt: Rc::new(rt),
         })
     }
 }
@@ -57,71 +50,61 @@ impl Backend for S3 {
         ))
     }
 
-    fn write(&self, key: &str) -> Result<Box<dyn Write>, String> {
-        // TODO: Really bad impl
-        let mut client = S3::new_endpoint("http://localhost:8333").unwrap();
-        client.key = key.to_string();
+    fn write<R: Read>(&self, key: &str, mut reader: R) -> Result<(), String> {
+        // TODO: Less bad, still buffer it all in memory, but we can at least
+        // manage the read here so we should be able to do something reasonable
+        // here at some point
+        let mut buf = Vec::new();
+        copy(&mut reader, &mut buf).unwrap();
 
-        Ok(Box::new(client))
-    }
-
-    fn read(&mut self, key: &str) -> Result<Box<dyn Read>, String> {
-        // TODO: Really bad impl
-        let mut client = S3::new_endpoint("http://localhost:8333").unwrap();
-        client.key = key.to_string();
-
-        println!("key: {:?}", key);
-        Ok(Box::new(client))
-    }
-}
-
-// TODO: Improve these api big time, we have a instance for read/write
-impl Write for S3 {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        // So bad, this just collects all data it can
-        self.buf.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        // We workaround by actually sending the data to s3 here
-        let stream = ByteStream::from(self.buf.clone());
+        let stream = ByteStream::from(buf);
 
         let call = self.client.put_object().
             body(stream).
             bucket("test").
-            key(self.key.clone()).
+            key(key).
             send();
 
         let _res = self.rt.block_on(async {call.await}).unwrap();
 
         Ok(())
     }
+
+    fn read(&mut self, key: &str) -> Result<Box<dyn Read>, String> {
+        // Do s3 dance to fetch a object and buffer it locally
+        let call = self.client.get_object().
+            bucket("test").
+            key(key).
+            send();
+
+        let res = self.rt.block_on(async {call.await}).unwrap();
+
+        let body_call = res.body.collect();
+        let data = self.rt.block_on(async {body_call.await.unwrap()});
+        let mut data_read = data.reader();
+
+        let mut buf = Vec::new();
+        copy(&mut data_read, &mut buf).unwrap();
+
+        Ok(Box::new(S3Read {
+            client: self.client.clone(),
+            rt: self.rt.clone(),
+            buf,
+        }))
+    }
 }
 
 
-// TODO: Improve these api big time, we have a instance for read/write
-impl Read for S3 {
+struct S3Read {
+    client: Rc<Client>,
+    rt: Rc<Runtime>,
+    buf: Vec<u8>,
+}
+
+impl Read for S3Read {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
-        }
-
-        if self.buf.is_empty() && !self.done {
-            // Do s3 dance to fetch a object and buffer it locally
-            let call = self.client.get_object().
-                bucket("test").
-                key(self.key.clone()).
-                send();
-
-            let res = self.rt.block_on(async {call.await}).unwrap();
-
-            let body_call = res.body.collect();
-            let data = self.rt.block_on(async {body_call.await.unwrap()});
-            let mut data_read = data.reader();
-
-            copy(&mut data_read, &mut self.buf);
-            self.done = true;
         }
 
         // Grab whatever buf.len is off the self.buf
@@ -132,7 +115,6 @@ impl Read for S3 {
         Ok(dat.len())
     }
 }
-
 
 async fn connect(endpoint: &'static str) -> Client {
     let conf = aws_config::load_from_env().await;

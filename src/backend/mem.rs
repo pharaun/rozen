@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{Read, copy};
 use vfs::{VfsPath, MemoryFS};
 
 use crate::backend::Backend;
@@ -30,12 +30,14 @@ impl Backend for MemoryVFS {
         ))
     }
 
-    fn write(&self, key: &str) -> Result<Box<dyn Write>, String> {
+    fn write<R: Read>(&self, key: &str, mut reader: R) -> Result<(), String> {
         let path = self.root
             .join("data").expect("data-dir")
             .join(key).expect("data-dir/key-file");
 
-        path.create_file().map_err(|err| err.to_string())
+        let mut write_to = path.create_file().map_err(|err| err.to_string())?;
+        copy(&mut reader, &mut write_to).unwrap();
+        Ok(())
     }
 
     fn read(&mut self, key: &str) -> Result<Box<dyn Read>, String> {
@@ -54,14 +56,16 @@ impl Backend for MemoryVFS {
 mod tests {
     use crate::backend::mem::MemoryVFS;
     use crate::backend::mem::Backend;
+    use std::io::Cursor;
 
     #[test]
     fn basic_read_write() {
         let mut back = MemoryVFS::new();
         let key = "test-key";
 
-        back.write(key).unwrap()
-            .write_all(b"Test Data").unwrap();
+        let data: &[u8; 9] = b"Test Data";
+        let b = Cursor::new(data);
+        back.write(key, b).unwrap();
 
         let mut val = String::new();
         back.read(key).unwrap()
@@ -75,11 +79,13 @@ mod tests {
         let mut back = MemoryVFS::new();
         let key = "test-key";
 
-        back.write(key).unwrap()
-            .write_all(b"Test Data").unwrap();
+        let data: &[u8; 9] = b"Test Data";
+        let b = Cursor::new(data);
+        back.write(key, b).unwrap();
 
-        back.write(key).unwrap()
-            .write_all(b"Data Test").unwrap();
+        let data: &[u8; 9] = b"Data Test";
+        let b = Cursor::new(data);
+        back.write(key, b).unwrap();
 
         let mut val = String::new();
         back.read(key).unwrap()
