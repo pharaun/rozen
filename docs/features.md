@@ -252,3 +252,16 @@ Backup
 	3. Fetch 1 or more file from a snapshot
 	4. Fetch whole snapshot
 	5. Diff/search through multiple snapshot for different version of a file. Ie “file is same in a-c snapshot, new file in d-e, not there in f-z”
+
+
+
+Consider:
+	1. If file is below 20MB pack it into a packfile
+	2. If packfile is at 59MB and target is 60MB, packing 20MB will overshoot it by 19MB
+	3. this is fine we probs want to have a 'max size of a file to pack into a packfile'
+	4. we want to have *atleast* X size for packfile before shipping it off
+	5. For files bigger than 20MB just ship it straight into s3
+	6. if run out of file to pack... whats our option? do we store it in s3 or is there
+		something that can be done?
+	7. how to deal with compaction, look at the cost and defer compaction till its cost
+		effective to repack (ie archive deletion)

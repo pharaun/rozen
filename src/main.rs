@@ -14,6 +14,7 @@ use crate::backend::Backend;
 mod crypto;
 mod engine;
 mod index;
+mod pack;
 use crate::index::Index;
 
 // Configuration
@@ -64,10 +65,10 @@ fn main() {
     let target = config.sources.get(0).unwrap().include.get(0).unwrap();
 
     // Build a s3 backend here
-    let mut backend = backend::s3::S3::new_endpoint("http://localhost:8333").unwrap();
+    //let mut backend = backend::s3::S3::new_endpoint("http://localhost:8333").unwrap();
 
     // In memory backend for data storage
-    //let mut backend = backend::mem::MemoryVFS::new();
+    let mut backend = backend::mem::MemoryVFS::new();
 
     let datetime = OffsetDateTime::now_utc();
     engine::append_only::snapshot(
@@ -89,6 +90,11 @@ fn main() {
     let mut dec = crypto::decrypt(&key, &mut index_content).unwrap();
     let mut und = Decoder::new(&mut dec).unwrap();
     let index = Index::load(&mut und);
+
+    // Load a packfile "packfile-1" then consult it to pull out the
+    // relevant files needed
+    let mut pack_read = Backend::read(&mut backend, "packfile-1").unwrap();
+    let pack = pack::Pack::read(&mut pack_read);
 
     // Dump the sqlite db data so we can view what it is
     println!("\nINDEX Dump + ARCHIVE Dump");

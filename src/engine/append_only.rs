@@ -8,7 +8,7 @@ use time::format_description::well_known::Rfc3339;
 use crate::index::Index;
 use crate::crypto;
 use crate::backend::Backend;
-
+use crate::pack::Pack;
 
 pub fn snapshot<B: Backend>(
     key: &crypto::Key,
@@ -17,6 +17,9 @@ pub fn snapshot<B: Backend>(
     walker: ignore::Walk,
 ) {
     let index = Index::new();
+
+    // Trivial case to start with
+    let mut pack = Pack::new();
 
     {
         for entry in walker {
@@ -47,8 +50,8 @@ pub fn snapshot<B: Backend>(
                                 // Encrypt the stream
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
-                                // Stream the data into the backend
-                                backend.write(content_hash.as_str(), &mut enc).unwrap();
+                                // Stream the data into the pack
+                                pack.write(content_hash.as_str(), &mut enc);
 
                                 // Load file info into index
                                 index.insert_file(e.path(), content_hash.as_str());
@@ -61,6 +64,14 @@ pub fn snapshot<B: Backend>(
                 Err(e) => println!("ERRR: {:?}", e),
             }
         }
+
+        // Finalize packfile and spool it into the backend
+        let (_hash, finalize_pack) = pack.finalize(&key);
+        backend.write(
+            "packfile-1",
+            &finalize_pack[..],
+        ).unwrap();
+
 
         // Spool the sqlite file into the backend as index
         let mut s_file = index.unload();
