@@ -103,9 +103,9 @@ fn main() {
         println!("\tPERM: {:?}", perm);
         println!("\tPATH: {:?}", path);
 
-        // Read from the backend
-        let mut read_from = Backend::read(&mut backend, &hash).unwrap();
-        let mut dec = crypto::decrypt(&key, &mut read_from).unwrap();
+        // Read from the packfile
+        let data = pack.find(&hash).unwrap();
+        let mut dec = crypto::decrypt(&key, &data[..]).unwrap();
         let mut und = Decoder::new(&mut dec).unwrap();
         let content_hash = test_hash(&key, &mut und).unwrap();
 

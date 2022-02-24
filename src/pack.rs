@@ -2,6 +2,7 @@ use std::io::{copy, Read};
 use blake3::Hasher;
 use blake3::Hash;
 use std::convert::TryInto;
+use std::str::from_utf8;
 
 use crate::crypto;
 
@@ -46,7 +47,7 @@ impl Pack {
         let index_idx = buf.len() as u32;
 
         buf.extend_from_slice(&count.to_le_bytes());
-        for (ih, ip) in idx.into_iter() {
+        for (ih, ip) in idx.iter() {
             // Dump the hash then u32 pointer
             buf.extend_from_slice(&ih.as_bytes());
             buf.extend_from_slice(&ip.to_le_bytes());
@@ -57,11 +58,27 @@ impl Pack {
         // Dump the last pointer to the index start
         buf.extend_from_slice(&index_idx.to_le_bytes());
 
-        // We need a hash to return - use whole file for now
-        // should probs look into merkle tree of hashes stuff
-        // TODO: not very good, this is cloning the whole thing bah
-        let mut buf_copy = &(buf.clone())[..];
-        let ret_hash = hash(key, &mut buf_copy).unwrap().to_hex().to_string();
+        // Perform a merkle tree hash (take all content hash, sort it then hash that)
+        // TODO: One simple fix is defined in Certificate Transparency: when computing leaf node
+        // hashes, a 0x00 byte is prepended to the hash data, while 0x01 is prepended when
+        // computing internal node hashes.
+        // Data = 0x0, packfile: 0x1, snapshot: 0x2 (snapshot contains hash of all packfiles used)
+        // etc...
+        let mut hashes: Vec<String> = Vec::new();
+
+        for (h, _) in idx.iter() {
+            hashes.push(h.to_string());
+        }
+        hashes.sort();
+
+        let mut hash_buf: Vec<u8> = Vec::new();
+        for h in hashes.iter() {
+            hash_buf.extend_from_slice(&h.as_bytes());
+        }
+        let mut hash_buf = &hash_buf[..];
+        let ret_hash = hash(key, &mut hash_buf).unwrap().to_hex().to_string();
+
+        println!("merkle pack hash: {:?}", ret_hash);
 
         // Return it
         (ret_hash, buf)
@@ -102,15 +119,52 @@ impl Pack {
         // Read in the actual index
         let mut index: Vec<(String, usize)> = Vec::new();
 
-        // TODO:
-        // 1. read in the index string+offset
-        // 2. read in each chunk into Chunk
-        // 3. stuff it into the pack and then use it
+        for i in (0..count) {
+            let i_idx = index_idx+4 + (((64 + 4) * i) as usize);
+            println!("i idx: {:?}", i_idx);
 
-        // Now to parse it out to an actual Pack + Chunk
-        Pack {
-            chunk: Vec::new()
+            let hash_buf: [u8; 64] = (&buf[i_idx..i_idx+64]).try_into().unwrap();
+            let hash = from_utf8(&hash_buf).unwrap();
+
+            let hash_idx: [u8; 4] = (&buf[i_idx+64..i_idx+68]).try_into().unwrap();
+            let h_idx = u32::from_le_bytes(hash_idx) as usize;
+
+            println!("hash: {:?}, idx: {:?}", hash.to_string(), h_idx);
+            index.push((hash.to_string(), h_idx));
         }
+
+        // Time to use the index to read data into each chunk
+        let mut chunk: Vec<Chunk> = Vec::new();
+
+        for (h,i) in index.into_iter() {
+            // Index points to size, read it in
+            // then read the remaining to a buffer
+            let size_buf: [u8; 4] = (&buf[i..i+4]).try_into().unwrap();
+            let size = u32::from_le_bytes(size_buf) as usize;
+
+            let data_buf = &buf[i+4..i+4+size];
+
+            println!("size: {:?}, data.len: {:?}", size, data_buf.len());
+
+            chunk.push(Chunk {
+                buf: data_buf.to_vec(),
+                hash: h,
+            });
+        }
+
+        Pack {
+            chunk: chunk,
+        }
+    }
+
+    pub fn find(&self, hash: &str) -> Option<Vec<u8>> {
+        for c in self.chunk.iter() {
+            if c.hash == hash {
+                return Some(c.buf.clone())
+            }
+        }
+
+        None
     }
 }
 
