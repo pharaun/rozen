@@ -265,3 +265,7 @@ Consider:
 		something that can be done?
 	7. how to deal with compaction, look at the cost and defer compaction till its cost
 		effective to repack (ie archive deletion)
+
+Tarsnap:
+	1. subkey that allows for write, read, delete
+	2. look into how to break up various key to allow different operations
