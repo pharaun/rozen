@@ -15,7 +15,8 @@ use crate::crypto;
 // 4. For on the fly pack writing have the packfile read in as far as it can
 //  on each file then once it hits an capacity threshold it stops and asks to
 //  be finalized for shipping off to S3
-//      - Use a timestamp maybe milliseconds timestamp + some random identifer
+//      - Use a crypto grade random key for the packfile-id
+//      - Store the hmac hash of the packfile in packfile + snapshot itself.
 //      - We need a identifier for the packfile but we don't need it to be a hash
 //      - Snapshot will be '<packfile-id>:<hash-id>' to pull out the content or
 //          can just be a list of <hash-id> then another list of <packfile-id> with <hash-id>s

@@ -42,6 +42,10 @@ pub fn snapshot<B: Backend>(
                                     &mut file_data
                                 ).unwrap().to_hex().to_string();
 
+                                // TODO: need to make sure that each stage always calls
+                                // some form of finalize on its into_inner reader object
+                                // so that it can flush it up the pipeline into the output.
+
                                 // Streaming compressor
                                 file_data.seek(SeekFrom::Start(0)).unwrap();
 
