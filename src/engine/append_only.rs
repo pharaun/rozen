@@ -25,6 +25,9 @@ pub fn snapshot<B: Backend>(
         for entry in walker {
             match entry {
                 Ok(e) => {
+                    let meta = e.metadata().unwrap();
+                    println!("len: {:?}", meta.len());
+
                     match e.file_type() {
                         None => println!("NONE: {}", e.path().display()),
                         Some(ft) => {

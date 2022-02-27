@@ -12,15 +12,15 @@ use crate::crypto;
 // 2. Have one for on the fly writing to S3/backend via whatever
 // 3. Make sure we understand security/validation of the serialization
 //  deserialization of various chunks here
-// 4. For on the fly pack writing out could do some sort of bounded queue
-//  where if its still below some target number it admits more reads to be
-//  added, otherwise it stops and then finalize the stream. Not sure how
-//  to do this in a single thread context may have to go multithread here
-//  - Main issue is we need an hash of all content hashes before for the name
-//  - https://docs.rs/tempfile/3.3.0/tempfile/fn.spooled_tempfile.html
-//  - There *IS* a way to do it without spooling, is a tad unorthodox
-//      * Hash + size various files, collect them into the pack
-//      * Finalize pool (start to read all files refs stored in pack)
+// 4. For on the fly pack writing have the packfile read in as far as it can
+//  on each file then once it hits an capacity threshold it stops and asks to
+//  be finalized for shipping off to S3
+//      - Use a timestamp maybe milliseconds timestamp + some random identifer
+//      - We need a identifier for the packfile but we don't need it to be a hash
+//      - Snapshot will be '<packfile-id>:<hash-id>' to pull out the content or
+//          can just be a list of <hash-id> then another list of <packfile-id> with <hash-id>s
+//  * Need to use some non-hash identifier cos of S3 and avoiding buffing/spooling to disk
+//  * https://docs.rs/tempfile/3.3.0/tempfile/fn.spooled_tempfile.html
 pub struct Pack {
     chunk: Vec<Chunk>
 }

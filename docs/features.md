@@ -269,3 +269,8 @@ Consider:
 Tarsnap:
 	1. subkey that allows for write, read, delete
 	2. look into how to break up various key to allow different operations
+
+Commit stuff:
+	1. open commit by putting a new file to ie indicate open of transaction.
+	2. push any new data up.
+	3. close commit by pushing another file/bit that indicate close of transaction.
