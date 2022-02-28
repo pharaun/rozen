@@ -1,10 +1,15 @@
-use std::io::{Read, copy};
+use std::io::{Read, Write, copy};
 use vfs::{VfsPath, MemoryFS};
 
 use crate::backend::Backend;
+use crate::backend::MultiPart;
 
 pub struct MemoryVFS {
     root: VfsPath
+}
+
+pub struct MemoryWrite {
+    inner: Box<dyn Write>
 }
 
 impl MemoryVFS {
@@ -50,7 +55,27 @@ impl Backend for MemoryVFS {
             Err(e) => Err(e.to_string()),
         }
     }
+
+    fn multi_write(&self, key: &str) -> Result<Box<dyn MultiPart>, String> {
+        let path = self.root
+            .join("data").expect("data-dir")
+            .join(key).expect("data-dir/key-file");
+
+        let mut write_to = path.create_file().map_err(|err| err.to_string())?;
+
+        Ok(Box::new(MemoryWrite {
+            inner: Box::new(write_to)
+        }))
+    }
 }
+
+impl MultiPart for MemoryWrite {
+    fn write(&mut self, reader: &mut dyn Read) -> Result<(), String> {
+        copy(reader, &mut self.inner).unwrap();
+        Ok(())
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

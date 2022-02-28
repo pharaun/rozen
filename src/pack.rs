@@ -3,6 +3,7 @@ use blake3::Hasher;
 use blake3::Hash;
 use std::convert::TryInto;
 use std::str::from_utf8;
+use hex;
 
 use crate::crypto;
 
@@ -23,6 +24,7 @@ use crate::crypto;
 //  * Need to use some non-hash identifier cos of S3 and avoiding buffing/spooling to disk
 //  * https://docs.rs/tempfile/3.3.0/tempfile/fn.spooled_tempfile.html
 pub struct Pack {
+    id: String,
     chunk: Vec<Chunk>
 }
 
@@ -33,7 +35,9 @@ struct Chunk {
 
 impl Pack {
     pub fn new() -> Self {
+        let id = crypto::gen_key();
         Pack {
+            id: hex::encode(id),
             chunk: Vec::new(),
         }
     }
@@ -55,6 +59,8 @@ impl Pack {
         }
 
         // We are done, now dump the index
+        // TODO; improve the index, it should list the hash + start+end offset of the data
+        // This will then avoid another indirection (ie eof -> index -> chunk-eof -> chunk data)
         let count = idx.len() as u32;
         let index_idx = buf.len() as u32;
 
@@ -90,10 +96,11 @@ impl Pack {
         let mut hash_buf = &hash_buf[..];
         let ret_hash = hash(key, &mut hash_buf).unwrap().to_hex().to_string();
 
+        // TODO: should record the hash after the index offpoint so that it can validate everything
         println!("merkle pack hash: {:?}", ret_hash);
 
         // Return it
-        (ret_hash, buf)
+        (self.id, buf)
     }
 
     pub fn write<R: Read>(&mut self, hash: &str, reader: &mut R) {
@@ -131,7 +138,7 @@ impl Pack {
         // Read in the actual index
         let mut index: Vec<(String, usize)> = Vec::new();
 
-        for i in (0..count) {
+        for i in 0..count {
             let i_idx = index_idx+4 + (((64 + 4) * i) as usize);
             println!("i idx: {:?}", i_idx);
 
@@ -164,7 +171,10 @@ impl Pack {
             });
         }
 
+        // TODO: should get the pack id
+        let id = crypto::gen_key();
         Pack {
+            id: hex::encode(id),
             chunk: chunk,
         }
     }

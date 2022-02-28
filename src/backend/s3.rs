@@ -12,6 +12,7 @@ use http::Uri;
 use std::rc::Rc;
 
 use crate::backend::Backend;
+use crate::backend::MultiPart;
 
 
 pub struct S3 {
@@ -91,6 +92,10 @@ impl Backend for S3 {
             rt: self.rt.clone(),
             buf,
         }))
+    }
+
+    fn multi_write(&self, key: &str) -> Result<Box<dyn MultiPart>, String> {
+        Err("no".to_string())
     }
 }
 

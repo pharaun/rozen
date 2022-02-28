@@ -37,6 +37,9 @@ pub fn snapshot<B: Backend>(
                                 let mut file_data = std::fs::File::open(e.path()).unwrap();
 
                                 // Hasher
+                                // TODO: stop passing around hash strings, pass around hash
+                                // result, then switch to string/bytes when needed at the
+                                // destination
                                 let content_hash = hash(
                                     &key,
                                     &mut file_data
