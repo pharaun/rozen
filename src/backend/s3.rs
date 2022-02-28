@@ -5,6 +5,8 @@ use tokio::runtime::Runtime;
 use aws_sdk_s3::Client;
 use aws_sdk_s3::Endpoint;
 use aws_sdk_s3::ByteStream;
+use aws_sdk_s3::model::CompletedMultipartUpload;
+use aws_sdk_s3::model::CompletedPart;
 use bytes::Buf;
 use http::Uri;
 
@@ -95,7 +97,75 @@ impl Backend for S3 {
     }
 
     fn multi_write(&self, key: &str) -> Result<Box<dyn MultiPart>, String> {
-        Err("no".to_string())
+        let call = self.client.create_multipart_upload().
+            bucket("test").
+            key(key).
+            send();
+
+        let res = self.rt.block_on(async {call.await}).unwrap();
+
+        Ok(Box::new(S3Multi {
+            client: self.client.clone(),
+            rt: self.rt.clone(),
+            key: key.to_string(),
+            id: res.upload_id.unwrap(),
+            part: Vec::new(),
+        }))
+    }
+}
+
+struct S3Multi {
+    client: Rc<Client>,
+    rt: Rc<Runtime>,
+    key: String,
+    id: String,
+    part: Vec<CompletedPart>,
+}
+
+impl MultiPart for S3Multi {
+    fn write(&mut self, reader: &mut dyn Read) -> Result<(), String> {
+        // TODO: for now do it in just one shot and buffer it all in memory
+        let mut buf = Vec::new();
+        copy(reader, &mut buf).unwrap();
+
+        let stream = ByteStream::from(buf);
+
+        // TODO: we just hardcode in part number (1) but we should
+        // collect it and store it in order the parts should be in
+        let call = self.client.upload_part().
+            body(stream).
+            bucket("test").
+            key(self.key.clone()).
+            upload_id(self.id.clone()).
+            part_number(1).
+            send();
+
+        let res = self.rt.block_on(async {call.await}).unwrap();
+
+        // Collect info to make a CompletePart to then record in finalize
+        self.part.push(
+            CompletedPart::builder().
+                e_tag(res.e_tag.unwrap()).
+                part_number(1).
+                build()
+        );
+
+        Ok(())
+    }
+
+    fn finalize(self: Box<Self>) -> Result<(), String> {
+        let call = self.client.complete_multipart_upload().
+            bucket("test").
+            key(self.key.clone()).
+            upload_id(self.id.clone()).
+            multipart_upload(
+                CompletedMultipartUpload::builder().
+                    set_parts(Some(self.part)).
+                    build()
+            ).send();
+
+        let _res = self.rt.block_on(async {call.await}).unwrap();
+        Ok(())
     }
 }
 

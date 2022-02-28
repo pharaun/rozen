@@ -12,7 +12,7 @@ pub trait Backend {
     fn multi_write(&self, key: &str) -> Result<Box<dyn MultiPart>, String>;
 }
 
-// TODO: not sure if we need a finalize step yet or not
 pub trait MultiPart {
     fn write(&mut self, reader: &mut dyn Read) -> Result<(), String>;
+    fn finalize(self: Box<Self>) -> Result<(), String>;
 }

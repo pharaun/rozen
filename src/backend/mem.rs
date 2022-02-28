@@ -74,6 +74,10 @@ impl MultiPart for MemoryWrite {
         copy(reader, &mut self.inner).unwrap();
         Ok(())
     }
+
+    fn finalize(self: Box<Self>) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 

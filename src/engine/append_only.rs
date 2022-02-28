@@ -1,4 +1,4 @@
-use std::io::{Seek, SeekFrom, copy, Read};
+use std::io::{Seek, SeekFrom, copy, Read, Cursor};
 use blake3::Hasher;
 use blake3::Hash;
 use zstd::stream::read::Encoder;
@@ -77,10 +77,24 @@ pub fn snapshot<B: Backend>(
 
         // Finalize packfile and spool it into the backend
         let (_hash, finalize_pack) = pack.finalize(&key);
-        backend.write(
+        //backend.write(
+        //    "packfile-1",
+        //    &finalize_pack[..],
+        //).unwrap();
+
+        // Begin a multipart upload here
+        let mut multipart = backend.multi_write(
             "packfile-1",
-            &finalize_pack[..],
         ).unwrap();
+
+        // Write to the backend till done/whatever
+        let mut rw = Cursor::new(&finalize_pack[..]);
+        multipart.write(
+            &mut rw,
+        ).unwrap();
+
+        // Complete the multipart upload
+        multipart.finalize().unwrap();
 
 
         // Spool the sqlite file into the backend as index
