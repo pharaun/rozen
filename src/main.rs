@@ -12,7 +12,7 @@ mod backend;
 use crate::backend::Backend;
 
 mod crypto;
-mod engine;
+mod append;
 mod index;
 mod pack;
 use crate::index::Index;
@@ -75,7 +75,7 @@ fn main() {
     //  * B<hash> = raw blob (big files)
     //  * P<rng>  = packfile (only one that isn't hash)
     let datetime = OffsetDateTime::now_utc();
-    engine::append_only::snapshot(
+    append::snapshot(
         &key,
         &mut backend,
         datetime,
