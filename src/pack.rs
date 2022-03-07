@@ -145,6 +145,75 @@ impl<R: Read> Read for PackIn<R> {
 }
 
 
+// TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
+pub struct PackOut {
+    idx: Vec<ChunkIdx>,
+    buf: Vec<u8>,
+}
+
+impl PackOut {
+    pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
+        let mut buf: Vec<u8> = Vec::new();
+        copy(reader, &mut buf).unwrap();
+
+        println!("Buf.len: {:?}", buf.len());
+
+        // Index, index length, index hash
+        let (i_idx, i_len, i_hash) = {
+            let idx_buf: [u8; 4]   = (&buf[(buf.len()-(64 + 8))..]).try_into().unwrap();
+            let len_buf: [u8; 4]   = (&buf[(buf.len()-(64 + 4))..]).try_into().unwrap();
+            let hash_buf: [u8; 64] = (&buf[(buf.len()-(64 + 0))..]).try_into().unwrap();
+
+            (
+                u32::from_le_bytes(idx_buf) as usize,
+                u32::from_le_bytes(len_buf) as usize,
+                from_utf8(&hash_buf).unwrap().to_string(),
+            )
+        };
+
+        println!("Index offset: {:?}", i_idx);
+        println!("Index length: {:?}", i_len);
+        println!("Index hash: {:?}", i_hash);
+
+        // Ingest the index then validate the hash
+        let mut idx_buf: &[u8] = &buf[i_idx..(i_idx+i_len)];
+
+        // TODO: convert both back to actual hash
+        let new_i_hash = hash(key, &mut idx_buf).unwrap().to_hex().to_string();
+
+        println!("New Index hash: {:?}", new_i_hash);
+        println!("Equal hash: {:?}", i_hash == new_i_hash);
+
+        // Deserialize the index
+        let chunk_idx: Vec<ChunkIdx> = bincode::deserialize(idx_buf).unwrap();
+
+        println!("Chunk len: {:?}", chunk_idx.len());
+
+        PackOut {
+            idx: chunk_idx,
+            buf: buf,
+        }
+    }
+
+    pub fn find(&self, hash: &str) -> Option<Vec<u8>> {
+        for c in self.idx.iter() {
+            if c.hash == hash {
+                let mut buf: Vec<u8> = Vec::new();
+                buf.copy_from_slice(&self.buf[c.start_idx..(c.start_idx+c.length)]);
+                return Some(buf);
+            }
+        }
+        None
+    }
+}
+
+
+
+
+
+
+
+
 
 
 
@@ -323,6 +392,7 @@ impl Pack {
 }
 
 // copy paste from main.rs for now
+// TODO: can probs make it into a hash struct so we dont need to pass the key around
 fn hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
     let mut hash = Hasher::new_keyed(&key.0);
     copy(data, &mut hash)?;
