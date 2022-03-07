@@ -98,10 +98,10 @@ fn main() {
     // Load a packfile "packfile-1" then consult it to pull out the
     // relevant files needed
     let mut pack_read = Backend::read(&mut backend, "packfile-1").unwrap();
-    let pack = pack::Pack::read(&mut pack_read);
+    let pack = pack::PackOut::load(&mut pack_read, &key);
 
     // Dump the sqlite db data so we can view what it is
-    println!("\nINDEX Dump + ARCHIVE Dump");
+    println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");
     index.walk_files(|path, perm, hash| {
         println!("HASH: {:?}", hash);
         println!("\tPERM: {:?}", perm);

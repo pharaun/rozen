@@ -1,4 +1,4 @@
-use std::io::{Seek, SeekFrom, copy, Read, Cursor};
+use std::io::{Seek, SeekFrom, copy, Read};
 use blake3::Hasher;
 use blake3::Hash;
 use zstd::stream::read::Encoder;
@@ -8,7 +8,7 @@ use time::format_description::well_known::Rfc3339;
 use crate::index::Index;
 use crate::crypto;
 use crate::backend::Backend;
-use crate::pack::Pack;
+use crate::pack::PackIn;
 
 pub fn snapshot<B: Backend>(
     key: &crypto::Key,
@@ -19,7 +19,12 @@ pub fn snapshot<B: Backend>(
     let index = Index::new();
 
     // Trivial case to start with
-    let mut pack = Pack::new();
+    let mut pack = PackIn::new();
+
+    // Begin a multipart upload here
+    let mut multipart = backend.multi_write(
+        "packfile-1",
+    ).unwrap();
 
     {
         for entry in walker {
@@ -61,7 +66,13 @@ pub fn snapshot<B: Backend>(
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                 // Stream the data into the pack
-                                pack.write(content_hash.as_str(), &mut enc);
+                                let mut chunk = pack.begin_write(content_hash.as_str(), &mut enc);
+
+                                // Spool the pack content to this point into multiwrite
+                                multipart.write(&mut chunk).unwrap();
+
+                                // Finalize the chunk write
+                                pack.finish_write(chunk);
 
                                 // Load file info into index
                                 index.insert_file(e.path(), content_hash.as_str());
@@ -76,21 +87,10 @@ pub fn snapshot<B: Backend>(
         }
 
         // Finalize packfile and spool it into the backend
-        let (_hash, finalize_pack) = pack.finalize(&key);
-        //backend.write(
-        //    "packfile-1",
-        //    &finalize_pack[..],
-        //).unwrap();
+        pack.finalize(&key);
 
-        // Begin a multipart upload here
-        let mut multipart = backend.multi_write(
-            "packfile-1",
-        ).unwrap();
-
-        // Write to the backend till done/whatever
-        let mut rw = Cursor::new(&finalize_pack[..]);
         multipart.write(
-            &mut rw,
+            &mut pack,
         ).unwrap();
 
         // Complete the multipart upload
