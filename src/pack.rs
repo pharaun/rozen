@@ -1,9 +1,13 @@
 use std::io::{copy, Read};
+use std::cmp;
 use blake3::Hasher;
 use blake3::Hash;
 use std::convert::TryInto;
 use std::str::from_utf8;
 use hex;
+use serde::Serialize;
+use serde::Deserialize;
+use bincode;
 
 use crate::crypto;
 
@@ -23,6 +27,134 @@ use crate::crypto;
 //          can just be a list of <hash-id> then another list of <packfile-id> with <hash-id>s
 //  * Need to use some non-hash identifier cos of S3 and avoiding buffing/spooling to disk
 //  * https://docs.rs/tempfile/3.3.0/tempfile/fn.spooled_tempfile.html
+pub struct PackIn<R: Read> {
+    pub id: String,
+    idx: Vec<ChunkIdx>,
+
+    // TODO: Not sure how to hold state bits yet
+    finalized: Option<Vec<u8>>,
+    p_idx: usize,
+
+    // TODO: probs should be its own data structure to manage the chunk bits
+    cur_chunk: Option<ChunkState<R>>,
+}
+
+struct ChunkState<R: Read> {
+    hash: String,
+    inner: R,
+    len: usize,
+    idx: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ChunkIdx {
+    start_idx: usize,
+    length: usize,
+    hash: String,
+}
+
+impl<R: Read> PackIn<R> {
+    pub fn new() -> Self {
+        let id = crypto::gen_key();
+        PackIn {
+            id: hex::encode(id),
+            idx: Vec::new(),
+            finalized: None,
+            p_idx: 0,
+            cur_chunk: None,
+        }
+    }
+
+    // TODO: should have integrity check to make sure the current reader is
+    // done (aka unset otherwise it errors)
+    pub fn write(&mut self, hash: &str, reader: R) {
+        self.cur_chunk = Some(ChunkState {
+            hash: hash.to_string(),
+            inner: reader,
+            len: 0,
+            idx: self.p_idx,
+        });
+    }
+
+    // TODO: should hash+hmac various data bits in a packfile
+    pub fn finalize(&mut self, key: &crypto::Key) {
+        // [ChunkIdx..] idx_pointer, len, hash
+        let mut buf: Vec<u8> = Vec::new();
+        let index = bincode::serialize(&self.idx).unwrap();
+        buf.extend_from_slice(&index[..]);
+
+        // Write pointer + len + hash
+        buf.extend_from_slice(
+            &(self.p_idx as u32).to_le_bytes()
+        );
+        buf.extend_from_slice(
+            &(index.len() as u32).to_le_bytes()
+        );
+
+        let mut hash_buf = &index[..];
+        buf.extend_from_slice(
+            hash(key, &mut hash_buf).unwrap().to_hex().to_string().as_bytes()
+        );
+
+        self.finalized = Some(buf);
+    }
+}
+
+// Read from pack till EoF then time for next chunk to be added
+// TODO: add chunk header+trailer
+impl<R: Read> Read for PackIn<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(chunk) = self.cur_chunk.as_mut() {
+            // Read from chunk reader till done
+            let c_len = chunk.inner.read(buf).unwrap();
+
+            // Manage the len and update p_idx
+            self.p_idx += c_len;
+            chunk.len += c_len;
+
+            // Check if we hit EOF?
+            if c_len == 0 {
+                // We hit eof of the underlaying file
+                self.idx.push(ChunkIdx {
+                    start_idx: chunk.idx,
+                    length: chunk.len,
+                    hash: chunk.hash.clone(),
+                });
+                self.cur_chunk = None;
+            }
+
+            Ok(c_len)
+        } else if let Some(f_buf) = self.finalized.as_mut() {
+            if f_buf.is_empty() {
+                // Its done, go home
+                Ok(0)
+            } else {
+                // Write out what we can
+                let split_at = cmp::min(f_buf.len(), buf.len());
+                let dat: Vec<u8> = f_buf.drain(0..split_at).collect();
+                buf[0..split_at].copy_from_slice(&dat[..]);
+
+                Ok(dat.len())
+            }
+        } else {
+            // We aren't finalized but we don't have further data yet
+            // Return EOF
+            Ok(0)
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
 pub struct Pack {
     id: String,
     chunk: Vec<Chunk>
