@@ -75,6 +75,9 @@ pub fn snapshot<B: Backend>(
                                 pack.finish_write(chunk);
 
                                 // Load file info into index
+                                // Snapshot will be '<packfile-id>:<hash-id>' to pull out
+                                //  the content or can just be a list of <hash-id> then another
+                                //  list of <packfile-id> with <hash-id>s
                                 index.insert_file(e.path(), content_hash.as_str());
                             } else {
                                 println!("SKIP: {}", e.path().display());

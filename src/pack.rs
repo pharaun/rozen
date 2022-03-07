@@ -12,21 +12,7 @@ use bincode;
 use crate::crypto;
 
 
-// TODO: do better index and avoid (?) the buffering here
-// 1. Have one for on the fly reading from S3 via range request/etc
-// 2. Have one for on the fly writing to S3/backend via whatever
-// 3. Make sure we understand security/validation of the serialization
-//  deserialization of various chunks here
-// 4. For on the fly pack writing have the packfile read in as far as it can
-//  on each file then once it hits an capacity threshold it stops and asks to
-//  be finalized for shipping off to S3
-//      - Use a crypto grade random key for the packfile-id
-//      - Store the hmac hash of the packfile in packfile + snapshot itself.
-//      - We need a identifier for the packfile but we don't need it to be a hash
-//      - Snapshot will be '<packfile-id>:<hash-id>' to pull out the content or
-//          can just be a list of <hash-id> then another list of <packfile-id> with <hash-id>s
-//  * Need to use some non-hash identifier cos of S3 and avoiding buffing/spooling to disk
-//  * https://docs.rs/tempfile/3.3.0/tempfile/fn.spooled_tempfile.html
+// Attempt to on the fly write chunks into a packfile to a backend
 pub struct PackIn {
     pub id: String,
     idx: Vec<ChunkIdx>,
@@ -36,6 +22,8 @@ pub struct PackIn {
     p_idx: usize,
 }
 
+// TODO: Make sure we understand security/validation of the serialization deserialization of
+// various chunks here
 #[derive(Serialize, Deserialize, Debug)]
 struct ChunkIdx {
     start_idx: usize,
@@ -44,6 +32,7 @@ struct ChunkIdx {
 }
 
 impl PackIn {
+    // Use a crypto grade random key for the packfile-id
     pub fn new() -> Self {
         let id = crypto::gen_key();
         PackIn {
@@ -76,6 +65,7 @@ impl PackIn {
     }
 
     // TODO: should hash+hmac various data bits in a packfile
+    // Store the hmac hash of the packfile in packfile + snapshot itself.
     pub fn finalize(&mut self, key: &crypto::Key) {
         // [ChunkIdx..] idx_pointer, len, hash
         let mut buf: Vec<u8> = Vec::new();
@@ -153,6 +143,7 @@ impl<R: Read> Read for ChunkState<R> {
 }
 
 
+// Attempt to read a packfile from the backend in a streaming manner
 // TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
 pub struct PackOut {
     idx: Vec<ChunkIdx>,
