@@ -7,6 +7,7 @@ use zstd::stream::read::Decoder;
 use serde::Deserialize;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use std::collections::HashMap;
 
 mod backend;
 use crate::backend::Backend;
@@ -95,20 +96,35 @@ fn main() {
     let mut und = Decoder::new(&mut dec).unwrap();
     let index = Index::load(&mut und);
 
-    // Load a packfile "packfile-1" then consult it to pull out the
-    // relevant files needed
-    let mut pack_read = Backend::read(&mut backend, "packfile-1").unwrap();
-    let pack = pack::PackOut::load(&mut pack_read, &key);
+    // Cached packfile refs
+    let mut pack_cache = HashMap::new();
 
     // Dump the sqlite db data so we can view what it is
     println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");
-    index.walk_files(|path, perm, hash| {
+    index.walk_files(|path, perm, pack, hash| {
+        let pack = pack.unwrap();
         println!("HASH: {:?}", hash);
+        println!("\tPACK: {:?}", pack);
         println!("\tPERM: {:?}", perm);
         println!("\tPATH: {:?}", path);
 
+        // Find or load the packfile
+        if !pack_cache.contains_key(&pack) {
+            println!("Loading: {:?}", pack);
+
+            let mut pack_read = Backend::read(&mut backend, &pack).unwrap();
+            let pack_file = pack::PackOut::load(&mut pack_read, &key);
+
+            pack_cache.insert(
+                pack.clone(),
+                pack_file,
+            );
+        }
+
         // Read from the packfile
-        let data = pack.find(&hash).unwrap();
+        let data = pack_cache.get(&pack).unwrap().find(&hash).unwrap();
+
+        // Process the data
         let mut dec = crypto::decrypt(&key, &data[..]).unwrap();
         let mut und = Decoder::new(&mut dec).unwrap();
         let content_hash = test_hash(&key, &mut und).unwrap();

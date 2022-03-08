@@ -23,6 +23,7 @@ impl Index {
              CREATE TABLE files (
                 path VARCHAR NOT NULL,
                 permission INTEGER NOT NULL,
+                pack_hash VARCHAR,
                 content_hash VARCHAR NOT NULL
              );
              COMMIT;"
@@ -36,37 +37,39 @@ impl Index {
     }
 
     // TODO: improve the types
-    pub fn insert_file(&self, path: &std::path::Path, hash: &str) {
+    pub fn insert_file(&self, path: &std::path::Path, pack: Option<&str>, hash: &str) {
         let mut file_stmt = self.conn.prepare_cached(
             "INSERT INTO files
-             (path, permission, content_hash)
+             (path, permission, pack_hash, content_hash)
              VALUES
-             (?, ?, ?)"
+             (?, ?, ?, ?)"
         ).unwrap();
 
         // Load file into index
         file_stmt.execute(rs::params![
             format!("{}", path.display()),
             0000,
+            pack,
             hash,
         ]).unwrap();
     }
 
     pub fn walk_files<F>(&self, mut f: F)
     where
-        F: FnMut(&str, u32, &str)
+        F: FnMut(&str, u32, Option<String>, &str)
     {
         let mut dump_stmt = self.conn.prepare_cached(
-            "SELECT path, permission, content_hash FROM files"
+            "SELECT path, permission, pack_hash, content_hash FROM files"
         ).unwrap();
         let mut rows = dump_stmt.query([]).unwrap();
 
         while let Ok(Some(row)) = rows.next() {
             let path: String = row.get(0).unwrap();
             let perm: u32 = row.get(1).unwrap();
-            let hash: String = row.get(2).unwrap();
+            let pack: Option<String> = row.get(2).ok();
+            let hash: String = row.get(3).unwrap();
 
-            f(path.as_str(), perm, hash.as_str());
+            f(path.as_str(), perm, pack, hash.as_str());
         }
     }
 

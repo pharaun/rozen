@@ -23,7 +23,7 @@ pub fn snapshot<B: Backend>(
 
     // Begin a multipart upload here
     let mut multipart = backend.multi_write(
-        "packfile-1",
+        &pack.id,
     ).unwrap();
 
     {
@@ -78,7 +78,7 @@ pub fn snapshot<B: Backend>(
                                 // Snapshot will be '<packfile-id>:<hash-id>' to pull out
                                 //  the content or can just be a list of <hash-id> then another
                                 //  list of <packfile-id> with <hash-id>s
-                                index.insert_file(e.path(), content_hash.as_str());
+                                index.insert_file(e.path(), Some(&pack.id), content_hash.as_str());
                             } else {
                                 println!("SKIP: {}", e.path().display());
                             }
