@@ -274,3 +274,16 @@ Commit stuff:
 	1. open commit by putting a new file to ie indicate open of transaction.
 	2. push any new data up.
 	3. close commit by pushing another file/bit that indicate close of transaction.
+
+Security:
+	1. hmac
+	2. some form of signature to validate a blob/repo/whatever
+
+Priority 1:
+	1. worm backup
+		- assumes data blob rarely changes
+		- assumes meta data can change & move around
+		- assume change rate is very low
+		- assume main activity is
+			* change of meta data/moving around
+			* addition of new data

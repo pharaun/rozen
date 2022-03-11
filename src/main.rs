@@ -72,9 +72,9 @@ fn main() {
     let mut backend = backend::mem::MemoryVFS::new();
 
     // TODO: should name various things like Index getting its own hashkey
-    //  * I<hash> = index
-    //  * B<hash> = raw blob (big files)
-    //  * P<rng>  = packfile (only one that isn't hash)
+    //  * I-<timestamp> = index
+    //  * P-<rng>  = packfile (only one that isn't hash)
+    //  * B-<hash> = raw blob (big files)
     let datetime = OffsetDateTime::now_utc();
     append::snapshot(
         &key,

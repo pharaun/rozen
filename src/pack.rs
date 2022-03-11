@@ -1,3 +1,21 @@
+//! Collection of Blobs
+//!
+//! # Top Level
+//!
+//! | Header  | [`Blobs`; N] | Index |
+//! | ------- | ------------ | ----- |
+//! | b"pack" | [u8; N]      | See Below |
+//!
+//! # Blobs
+//!
+//! This is basically [`crypto::Crypter<R, E>`]
+//!
+//! # Index
+//!
+//! | [[`ChunkIdx`]; N] | Index offset | Index length | Index HMAC |
+//! | ----------------- | ------------ | ------------ | ---------- |
+//! | [u8; N]           | u32          | u32          | [u8; 64]   |
+
 use std::io::{copy, Read};
 use std::cmp;
 use blake3::Hasher;
@@ -10,7 +28,6 @@ use serde::Deserialize;
 use bincode;
 
 use crate::crypto;
-
 
 // Attempt to on the fly write chunks into a packfile to a backend
 pub struct PackIn {
