@@ -47,6 +47,7 @@ fn main() {
     crypto::init().unwrap();
 
     // Per run key
+    // TODO: bad news, should have separate key, one for encryption, and one for hmac
     let key = crypto::gen_key();
 
     let config: Config = toml::from_str(r#"

@@ -2,9 +2,62 @@
 //!
 //! # Top Level
 //!
-//! | Header  | [`Blobs`; N] | Index |
-//! | ------- | ------------ | ----- |
-//! | b"pack" | [u8; N]      | See Below |
+//! | Type    | Name  | Description |
+//! | :-----: | ----- | ----------- |
+//! | [u8; 4] | magic | b"pack" |
+//! | [u8; N] | chunk | See [Blobs](#blobs) |
+//! | [u8; N] | index | See [Index](#index) |
+//!
+//! TODO: ideally it would be like
+//!
+//! header, chunk, index, trailer
+//!
+//! TODO: Do we want version in trailer and header? if version is in trailer can
+//! read trailer bytes to verify the version+index, then proceed to unpack the pack using
+//! seeks for s3 without having to read the header then the trailer
+//!
+//! TODO: Consider it from 2 pov, streaming (read front to end) where you read
+//! the header, then process each chunk one by one, also from fetch pov where you
+//! read trailer then fetch just the chunk's data you care about. support both case
+//!
+//! Magic
+//! Pack Header - first chunk
+//! data header - second chunk onward
+//! index header - second to last chunk
+//! trailer header - last chunk
+//!
+//! PNG is for each chunk:
+//!     length, type, [data], crc
+//!     Probs can employ the same png chunking/etc for other file format (ie stand alone blobs etc)
+//!
+//!     todo: understand the encryption bit it might become:
+//!     Enc len (4096, type, data, checksum) for all except last which is less than 4096?
+//!     Do we want to pad so its always 4 kilobytes, may want to consider 64 kilobytes instead?
+//!         - can we turn it into a const gentrics that let the N be defined to a const such as 4096
+//!     Is this information leak?
+//!     do we always mandate reading from index first then streaming from the index? (requires
+//!     seekability storage) possible to reconstruct index upon truncation or data stream damage?
+//!     Could always just fix the chunk at some chunk size for streamability and allow things to
+//!     cross boundaries.
+//!
+//!     I think i want to use the file HMAC for additional data with encryption so we can ensure
+//!     that the encrypted data is also assocated with the correct plaintext keyed hmac
+//!
+//!     One way to consider information leak is pack file is purely an optimization for glacier
+//!     store in which the index can be stored in S3 + packfile, and the specified byte range be
+//!     fetched out of glacier. This leads me to interpret any information leak is also the same
+//!     as a stand-alone blob in glacier store so... treat both the same. packfile == packed blobs
+//!
+//!     Now mind you there *is* information leak via the length cos of compression/plaintext but
+//!     blob storage would have this as well so resolving blob storage + etc will be good to have
+//!     also this is more for chunked data ala borg/restic/etc
+//!
+//!
+//! header = magic || version
+//!     magic = b"rozen-pack" (consider rozepack -> u64)
+//! chunk = data (has encryption tags to validate + compression and inner hashes)
+//! index = hmac? || enc+comp(data) (need hmac if encryption+compression validates?)
+//! trailer = index offset
 //!
 //! # Blobs
 //!
@@ -12,9 +65,13 @@
 //!
 //! # Index
 //!
-//! | [[`ChunkIdx`]; N] | Index offset | Index length | Index HMAC |
-//! | ----------------- | ------------ | ------------ | ---------- |
-//! | [u8; N]           | u32          | u32          | [u8; 64]   |
+//! | Type              | Name   | Description |
+//! | :---------------: | ------ | ----------- |
+//! | [[`ChunkIdx`]; N] | index  | Hash -> offset+length of each chunk in the packfile |
+//! | u32               | offset | Pointer to the start of the index |
+//! | u32               | length | Length of the index |
+//! | [u8; 64]          | hmac   | Index HMAC </br> HMAC(index \|\| offset \|\| length) |
+//!
 
 use std::io::{copy, Read};
 use std::cmp;
