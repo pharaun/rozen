@@ -29,6 +29,8 @@
 //! PNG is for each chunk:
 //!     length, type, [data], crc
 //!     Probs can employ the same png chunking/etc for other file format (ie stand alone blobs etc)
+//!     crc - https://docs.rs/twox-hash/latest/twox_hash/ - 32 or 64bit xxhash (this is only for
+//!     integrity)
 //!
 //!     todo: understand the encryption bit it might become:
 //!     Enc len (4096, type, data, checksum) for all except last which is less than 4096?
@@ -52,12 +54,50 @@
 //!     blob storage would have this as well so resolving blob storage + etc will be good to have
 //!     also this is more for chunked data ala borg/restic/etc
 //!
+//!     Implement a data-stream/filestore module that main purpose is to take various piece of data
+//!     and store them in a standardized format into the repo. we probs will have 3 major family of
+//!     file format based off this format (look at PNG spec for inspiration)
+//!         - Packfile: magic, header, chunk[1+], (index + trailer) or (trailer-index), pointer to
+//!         trailer (Look at MLA, DAR, etc for inspiration)
+//!         - Singlets: magic, header, chunk[1], trailer, pointer->trailer
+//!         - Snapshot: magic, header, snapshot, trailer, pointer->trailer
+//!
+//!     Layers:
+//!         raw files -> file
+//!         file_hash + packfile_id / file_hash -> snapshots -> file
+//!
+//!         file -> compression -> crypto -> chunks
+//!
+//!         chunks -> one chunk file
+//!         multiple chunks -> chunk_index -> packfile
+//!
+//!         one_chunk_file/packfile -> storage backend (s3)
+//!
+//!     chunk:
+//!         RHDR - rozen header
+//!         FHDR - file data (1 followed by 1 or more chunks)
+//!             phash - keyed hmac of plaintext data
+//!         FDAT - file data chunks (FDAT ends when either a FHDR, FIDX, REND follows it)
+//!             1 more more chunk concat, just raw encrypted data
+//!         fIDX - file data index (if more than 1 FHDR file should have a FIDX)
+//!             vec<(phash, pointer to start of FDAT, length (to end of last FDAT))>
+//!             optional, is for efficient seek in a packfile, encouraged
+//!         REND - rozen end
+//!             Open question: how to handle pointer -> trailer
+//!                 * Different END chunk (idx, and None)?
+//!                 * Pointer -> 0x00... or 0xFF.. if single FHDR file or snapshot (which is a single FHDR too)
+//!                 * optional checksum? then -> REND, 8byte, pointer. read the last 20 bytes of
+//!                 file
+//!                     - REND, 0 => no pointer (then how to parse cos may have prepended data)
+//!                     - REND, 8, 0xPTR (pointer to fIDX)
+//!
 //!
 //! header = magic || version
 //!     magic = b"rozen-pack" (consider rozepack -> u64)
+//!     magic = [137, R, O, Z, E, N, 13, 10, 26, 10]
 //! chunk = data (has encryption tags to validate + compression and inner hashes)
 //! index = hmac? || enc+comp(data) (need hmac if encryption+compression validates?)
-//! trailer = index offset
+//! trailer = index offset - offset to the start of the trailer chunk
 //!
 //! # Blobs
 //!
