@@ -59,18 +59,24 @@
 //!         EDAT
 //!             - Encrypted Data Chunks
 //!             - EDAT == 1 or more EDAT in sequence
-//!             - Ends when any other chunk is seen or end of file.
+//!             - Ends when any other chunk is seen
+//!         REND
+//!             - Rozen file end (only there to terminate a sequence of EDAT)
+//!             - Contains the trailer-pointer (without chunk checksum)
+//!             - 4, REND, ptr
+//!             - trailer-pointer
+//!                 * points to fIDX
+//!                 * None
+//!                     - Fetch 16 bytes at end of file
+//!                     - If last 4 bytes == REND, there is no trailer pointer
+//!                         * What if it is 4, REND, REND (for pointer) so better validate
+//!                         * last 8 byte is 0, REND, if there is REND, REND then its a pointer to
+//!                             REND bytes
+//!                     - Otherwise validate that first 8 bytes is 4 + REND before using pointer
 //!
 //!         Rules:
 //!             - lower case first letter for optional (5th bit)
 //!             - Mandatory upper for other 3, bit meaning to be determited
-//!
-//!         Valid file format:
-//!             magic, 2 or more chunks, trailer-pointer
-//!             - trailer-pointer
-//!                 * points to a fIDX
-//!                 * Points to begining of file
-//!                     - If begining of file, there is no fIDX
 //!
 //! magic = [137, R, O, Z, E, N, 13, 10, 26, 10]
 //!
