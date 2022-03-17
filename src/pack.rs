@@ -8,96 +8,71 @@
 //! | [u8; N] | chunk | See [Blobs](#blobs) |
 //! | [u8; N] | index | See [Index](#index) |
 //!
-//! TODO: ideally it would be like
 //!
-//! header, chunk, index, trailer
+//! Consider it from 2 PoV
+//!     - Streaming (Beginning to end)
+//!     - Fetch+seek (read trailing pointer to fIDX)
+//!         * Fetch fIDX -> eof-8
+//!         * Use this to fetch all EDAT data desired
 //!
-//! TODO: Do we want version in trailer and header? if version is in trailer can
-//! read trailer bytes to verify the version+index, then proceed to unpack the pack using
-//! seeks for s3 without having to read the header then the trailer
-//!
-//! TODO: Consider it from 2 pov, streaming (read front to end) where you read
-//! the header, then process each chunk one by one, also from fetch pov where you
-//! read trailer then fetch just the chunk's data you care about. support both case
-//!
-//! Magic
-//! Pack Header - first chunk
-//! data header - second chunk onward
-//! index header - second to last chunk
-//! trailer header - last chunk
-//!
-//! PNG is for each chunk:
+//! PNG is the big inspiration
 //!     length, type, [data], crc
-//!     Probs can employ the same png chunking/etc for other file format (ie stand alone blobs etc)
 //!     crc - https://docs.rs/twox-hash/latest/twox_hash/ - 32 or 64bit xxhash (this is only for
 //!     integrity)
 //!
-//!     todo: understand the encryption bit it might become:
-//!     Enc len (4096, type, data, checksum) for all except last which is less than 4096?
-//!     Do we want to pad so its always 4 kilobytes, may want to consider 64 kilobytes instead?
-//!         - can we turn it into a const gentrics that let the N be defined to a const such as 4096
-//!     Is this information leak?
-//!     do we always mandate reading from index first then streaming from the index? (requires
-//!     seekability storage) possible to reconstruct index upon truncation or data stream damage?
-//!     Could always just fix the chunk at some chunk size for streamability and allow things to
-//!     cross boundaries.
+//! Encryption
+//!     - Investigate padding (PADME?) for anonomyizing file size to reduce identification
+//!     - Chunk/file size is information leak
+//!          One way to consider information leak is pack file is purely an optimization for
+//!          glacier store in which the index can be stored in S3 + packfile, and the specified
+//!          byte range be fetched out of glacier. This leads me to interpret any information leak
+//!          is also the same as a stand-alone blob in glacier store so... treat both the same.
+//!          packfile == packed blobs
 //!
-//!     I think i want to use the file HMAC for additional data with encryption so we can ensure
-//!     that the encrypted data is also assocated with the correct plaintext keyed hmac
+//!          Now mind you there *is* information leak via the length cos of compression/plaintext
+//!          but blob storage would have this as well so resolving blob storage + etc will be good
+//!          to have also this is more for chunked data ala borg/restic/etc
 //!
-//!     One way to consider information leak is pack file is purely an optimization for glacier
-//!     store in which the index can be stored in S3 + packfile, and the specified byte range be
-//!     fetched out of glacier. This leads me to interpret any information leak is also the same
-//!     as a stand-alone blob in glacier store so... treat both the same. packfile == packed blobs
+//!     - Use the phash (file HMAC) for additional data with the encryption to ensure that
+//!     the encrypted data matches the phash
 //!
-//!     Now mind you there *is* information leak via the length cos of compression/plaintext but
-//!     blob storage would have this as well so resolving blob storage + etc will be good to have
-//!     also this is more for chunked data ala borg/restic/etc
-//!
-//!     Implement a data-stream/filestore module that main purpose is to take various piece of data
-//!     and store them in a standardized format into the repo. we probs will have 3 major family of
-//!     file format based off this format (look at PNG spec for inspiration)
-//!         - Packfile: magic, header, chunk[1+], (index + trailer) or (trailer-index), pointer to
-//!         trailer (Look at MLA, DAR, etc for inspiration)
-//!         - Singlets: magic, header, chunk[1], trailer, pointer->trailer
-//!         - Snapshot: magic, header, snapshot, trailer, pointer->trailer
+//! File format family:
+//!     - Packfile: magic, FHDR, EDAT, FHDR, EDAT, fIDX, EDAT, trailer (-> fIDX)
+//!     - Singlet: magic, FHDR, EDAT, trailer (-> 0x0000)
+//!     - Snapshot: Same as Singlet
 //!
 //!     Layers:
-//!         raw files -> file
-//!         file_hash + packfile_id / file_hash -> snapshots -> file
+//!         input file -> FHDR + FILE
+//!         file_hash + packfile id -or- file_hash -> snapshot -> FHDR + FILE
+//!         multiple FHDR -> chunk_idx -> fIDX + FILE
 //!
-//!         file -> compression -> crypto -> chunks
+//!         FILE -> compression -> crypto -> EDAT
 //!
-//!         chunks -> one chunk file
-//!         multiple chunks -> chunk_index -> packfile
+//!     mvp-chunk:
+//!         FHDR
+//!             - File data (1 followed by 1 more more EDAT)
+//!             - phash => keyed hmac of plaintext data
+//!         fIDX
+//!             - File data index (if more than 1 FHDR) (1 followed by 1 or more EDAT)
+//!             - vec<(phash, pointer to start of FDAT, length (to end of last FDAT))>
+//!             - optional, is for efficient seek in a packfile, encouraged
+//!         EDAT
+//!             - Encrypted Data Chunks
+//!             - EDAT == 1 or more EDAT in sequence
+//!             - Ends when any other chunk is seen or end of file.
 //!
-//!         one_chunk_file/packfile -> storage backend (s3)
+//!         Rules:
+//!             - lower case first letter for optional (5th bit)
+//!             - Mandatory upper for other 3, bit meaning to be determited
 //!
-//!     chunk:
-//!         RHDR - rozen header
-//!         FHDR - file data (1 followed by 1 or more chunks)
-//!             phash - keyed hmac of plaintext data
-//!         FDAT - file data chunks (FDAT ends when either a FHDR, FIDX, REND follows it)
-//!             1 more more chunk concat, just raw encrypted data
-//!         fIDX - file data index (if more than 1 FHDR file should have a FIDX)
-//!             vec<(phash, pointer to start of FDAT, length (to end of last FDAT))>
-//!             optional, is for efficient seek in a packfile, encouraged
-//!         REND - rozen end
-//!             Open question: how to handle pointer -> trailer
-//!                 * Different END chunk (idx, and None)?
-//!                 * Pointer -> 0x00... or 0xFF.. if single FHDR file or snapshot (which is a single FHDR too)
-//!                 * optional checksum? then -> REND, 8byte, pointer. read the last 20 bytes of
-//!                 file
-//!                     - REND, 0 => no pointer (then how to parse cos may have prepended data)
-//!                     - REND, 8, 0xPTR (pointer to fIDX)
+//!         Valid file format:
+//!             magic, 2 or more chunks, trailer-pointer
+//!             - trailer-pointer
+//!                 * points to a fIDX
+//!                 * Points to begining of file
+//!                     - If begining of file, there is no fIDX
 //!
-//!
-//! header = magic || version
-//!     magic = b"rozen-pack" (consider rozepack -> u64)
-//!     magic = [137, R, O, Z, E, N, 13, 10, 26, 10]
-//! chunk = data (has encryption tags to validate + compression and inner hashes)
-//! index = hmac? || enc+comp(data) (need hmac if encryption+compression validates?)
-//! trailer = index offset - offset to the start of the trailer chunk
+//! magic = [137, R, O, Z, E, N, 13, 10, 26, 10]
 //!
 //! # Blobs
 //!
