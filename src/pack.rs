@@ -111,6 +111,8 @@ use serde::Deserialize;
 use bincode;
 use twox_hash::XxHash32;
 use std::hash::Hasher;
+use zstd::stream::read::Encoder;
+use zstd::stream::read::Decoder;
 
 use crate::crypto;
 
@@ -234,32 +236,30 @@ impl PackIn {
         }
 
         // Dump the FIDX chunk
+        let cached_p_idx = self.p_idx;
         self.write_buf(
             ltvc(b"FIDX", &[])
         );
 
-        // TODO: dump the idx into EDAT
-
-        // [ChunkIdx..] idx_pointer, len, hash
-        let mut buf: Vec<u8> = Vec::new();
+        // Dump IDX into 1 large EDAT for now
         let index = bincode::serialize(&self.idx).unwrap();
-        buf.extend_from_slice(&index[..]);
 
-        let cached_p_idx = self.p_idx;
-        self.write_buf(buf);
+        let comp = Encoder::new(
+            &index[..],
+            21
+        ).unwrap();
 
+        let mut enc = crypto::encrypt(&key, comp).unwrap();
+
+        let mut buf: Vec<u8> = Vec::new();
+        copy(&mut enc, &mut buf).unwrap();
+
+        self.write_buf(
+            ltvc(b"EDAT", &buf[..])
+        );
 
         // Dump the REND chunk
-        let mut buf2: Vec<u8> = Vec::new();
-        buf2.extend_from_slice(
-            &(cached_p_idx as u32).to_le_bytes()
-        );
-        buf2.extend_from_slice(
-            &(index.len() as u32).to_le_bytes()
-        );
-
-        // TODO: remove length, is served by the EDAT/FIDX length stuff
-        self.write_buf(ltvc(b"REND", &buf2));
+        self.write_buf(ltvc(b"REND", &(cached_p_idx as u32).to_le_bytes()));
         self.finalized = true;
     }
 }
@@ -339,6 +339,9 @@ pub struct PackOut {
 
 
 // Read the buffer to convert to a LTVC and validate
+// TODO: consider a iterator/streaming option where it takes a buffer
+// that begins on a chunk and then it streams the chunk+data one block at a time
+// TODO: make sure to reject too large chunk size for preventing out of memory bugs
 fn read_ltvc(buf: &[u8]) -> Option<([u8; 4], &[u8])> {
     let len_buf: [u8; 4] = buf[0..4].try_into().unwrap();
     let typ_buf: [u8; 4] = buf[4..8].try_into().unwrap();
@@ -371,29 +374,39 @@ impl PackOut {
 
         println!("Buf.len: {:?}", buf.len());
 
-        // Current REND is 20 bytes
+        // Current REND is 16 bytes
         // TODO: make this more intelligent
-        let (typ, rend_dat) = read_ltvc(&buf[buf.len()-20..buf.len()]).unwrap();
+        let (typ, rend_dat) = read_ltvc(&buf[buf.len()-16..buf.len()]).unwrap();
         if &typ == b"REND" {
             println!("REND parsing");
         }
 
-        let (i_idx, i_len) = {
+        let i_idx = {
             let idx_buf:  [u8; 4]  = rend_dat[0..4].try_into().unwrap();
-            let len_buf:  [u8; 4]  = rend_dat[4..8].try_into().unwrap();
-
-            (
-                u32::from_le_bytes(idx_buf) as usize,
-                u32::from_le_bytes(len_buf) as usize,
-            )
+            u32::from_le_bytes(idx_buf) as usize
         };
 
         println!("Index offset: {:?}", i_idx);
-        println!("Index length: {:?}", i_len);
+
+        // FIDX is 12 bytes, ingest that
+        let (typ, _) = read_ltvc(&buf[i_idx..(i_idx+12)]).unwrap();
+        if &typ == b"FIDX" {
+            println!("FIDX parsing");
+        }
+
+        // Fetch the EDAT
+        let (typ, edat) = read_ltvc(&buf[(i_idx+12)..]).unwrap();
+        if &typ == b"EDAT" {
+            println!("EDAT parsing");
+        }
+        let mut dec = crypto::decrypt(&key, edat).unwrap();
+        let mut und = Decoder::new(&mut dec).unwrap();
+
+        let mut idx_buf: Vec<u8> = Vec::new();
+        copy(&mut und, &mut idx_buf).unwrap();
 
         // Deserialize the index
-        let mut idx_buf: &[u8] = &buf[i_idx..(i_idx+i_len)];
-        let chunk_idx: Vec<ChunkIdx> = bincode::deserialize(idx_buf).unwrap();
+        let chunk_idx: Vec<ChunkIdx> = bincode::deserialize(&idx_buf).unwrap();
 
         println!("Chunk len: {:?}", chunk_idx.len());
         println!("Chunk Idx: {:#?}", chunk_idx);
