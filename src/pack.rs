@@ -52,7 +52,7 @@
 //!         FHDR
 //!             - File data (1 followed by 1 more more EDAT)
 //!             - phash => keyed hmac of plaintext data
-//!         fIDX
+//!         FIDX
 //!             - File data index (if more than 1 FHDR) (1 followed by 1 or more EDAT)
 //!             - vec<(phash, pointer to start of FDAT, length (to end of last FDAT))>
 //!             - optional, is for efficient seek in a packfile, encouraged
@@ -60,6 +60,12 @@
 //!             - Encrypted Data Chunks
 //!             - EDAT == 1 or more EDAT in sequence
 //!             - Ends when any other chunk is seen
+//!         FSNP
+//!             - file snapshot
+//!             - Not sure, its more to mark what a sequence of EDAT is for.
+//!                 * May end up having fHDR/fIDX/fSNP being marker chunks to mark what
+//!                 the following sequence of EDAT are for
+//!             - EDAT that contains the sqlite db that holds the relevant snapshot+metadata
 //!         REND
 //!             - Rozen file end (only there to terminate a sequence of EDAT)
 //!             - Contains the trailer-pointer (without chunk checksum)
@@ -78,7 +84,7 @@
 //!             - lower case first letter for optional (5th bit)
 //!             - Mandatory upper for other 3, bit meaning to be determited
 //!
-//! magic = [137, R, O, Z, E, N, 13, 10, 26, 10]
+//! magic = [137, R, O, Z, 13, 10, 26, 10]
 //!
 //! # Blobs
 //!
@@ -96,7 +102,6 @@
 
 use std::io::{copy, Read};
 use std::cmp;
-use blake3::Hasher;
 use blake3::Hash;
 use std::convert::TryInto;
 use std::str::from_utf8;
@@ -104,6 +109,8 @@ use hex;
 use serde::Serialize;
 use serde::Deserialize;
 use bincode;
+use twox_hash::XxHash32;
+use std::hash::Hasher;
 
 use crate::crypto;
 
@@ -113,7 +120,8 @@ pub struct PackIn {
     idx: Vec<ChunkIdx>,
 
     // TODO: Not sure how to hold state bits yet
-    finalized: Option<Vec<u8>>,
+    t_buf: Option<Vec<u8>>,
+    finalized: bool,
     p_idx: usize,
 }
 
@@ -126,84 +134,164 @@ struct ChunkIdx {
     hash: String,
 }
 
+fn magic() -> Vec<u8> {
+    vec![137, b'R', b'O', b'Z', 13, 10, 26, 10]
+}
+
+// TODO: Evaulate the need for a hash
+// Length, Type, Value, xxhash32 of Type+Value
+// u32, u32, [u8; N], u32
+fn ltvc(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut hash = XxHash32::with_seed(0);
+    hash.write(chunk_type);
+    hash.write(data);
+
+    let mut buf: Vec<u8> = Vec::new();
+
+    buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    buf.extend_from_slice(chunk_type);
+    buf.extend_from_slice(data);
+    buf.extend_from_slice(&(hash.finish() as u32).to_le_bytes());
+
+    if let Ok(out_str) = std::str::from_utf8(chunk_type) {
+        println!("Serializing: {:?}", out_str);
+    }
+
+    buf
+}
+
 impl PackIn {
     // Use a crypto grade random key for the packfile-id
     pub fn new() -> Self {
         let id = crypto::gen_key();
-        PackIn {
+        let mut pack = PackIn {
             id: hex::encode(id),
             idx: Vec::new(),
-            finalized: None,
+            // Start with the magic bits for the file format, inspired by PNG
+            t_buf: None,
+            finalized: false,
             p_idx: 0,
+        };
+        pack.write_buf(magic());
+        pack
+    }
+
+    fn write_buf(&mut self, data: Vec<u8>) {
+        self.p_idx += data.len();
+
+        println!("write_buf: {:?}", data.len());
+
+        match &mut self.t_buf {
+            None    => self.t_buf = Some(data),
+            Some(b) => b.extend(&data),
         }
     }
 
     // TODO: should have integrity check to make sure the current reader is
     // done (aka unset otherwise it errors)
     pub fn begin_write<R: Read>(&mut self, hash: &str, reader: R) -> ChunkState<R> {
-        ChunkState {
-            hash: hash.to_string(),
-            inner: reader,
-            len: 0,
-            idx: self.p_idx,
-            finished: false,
+        if !self.finalized {
+            // Dump the FHDR chunk
+            self.write_buf(
+                ltvc(
+                    b"FHDR",
+                    hash.to_string().as_bytes()
+                )
+            );
+
+            ChunkState {
+                hash: hash.to_string(),
+                inner: reader,
+                len: 0,
+                idx: self.p_idx,
+                finished: false,
+            }
+        } else {
+            panic!("SYSTEM-ERROR, this is finalized and got more ChunkState");
         }
     }
 
     pub fn finish_write<R: Read>(&mut self, chunk: ChunkState<R>) {
-        self.idx.push(ChunkIdx {
-            start_idx: chunk.idx,
-            length: chunk.len,
-            hash: chunk.hash.clone(),
-        });
-        self.p_idx += chunk.len;
+        if !self.finalized {
+            self.idx.push(ChunkIdx {
+                start_idx: chunk.idx,
+                length: chunk.len,
+                hash: chunk.hash.clone(),
+            });
+            self.p_idx += chunk.len;
+        } else {
+            panic!("SYSTEM-ERROR, this is finalized and got more ChunkState");
+        }
     }
 
     // TODO: should hash+hmac various data bits in a packfile
     // Store the hmac hash of the packfile in packfile + snapshot itself.
+    // TODO: should consume self, and return the final blob of data to read out then terminate
+    // for now we set finalized flag and refuse more blob additions
     pub fn finalize(&mut self, key: &crypto::Key) {
+        if self.finalized {
+            panic!("SYSTEM-ERROR, already finalized once, this is invalid");
+        }
+
+        // Dump the FIDX chunk
+        self.write_buf(
+            ltvc(b"FIDX", &[])
+        );
+
+        // TODO: dump the idx into EDAT
+
         // [ChunkIdx..] idx_pointer, len, hash
         let mut buf: Vec<u8> = Vec::new();
         let index = bincode::serialize(&self.idx).unwrap();
         buf.extend_from_slice(&index[..]);
 
-        // Write pointer + len + hash
-        buf.extend_from_slice(
-            &(self.p_idx as u32).to_le_bytes()
+        let cached_p_idx = self.p_idx;
+        self.write_buf(buf);
+
+
+        // Dump the REND chunk
+        let mut buf2: Vec<u8> = Vec::new();
+        buf2.extend_from_slice(
+            &(cached_p_idx as u32).to_le_bytes()
         );
-        buf.extend_from_slice(
+        buf2.extend_from_slice(
             &(index.len() as u32).to_le_bytes()
         );
 
-        let mut hash_buf = &index[..];
-        buf.extend_from_slice(
-            hash(key, &mut hash_buf).unwrap().to_hex().to_string().as_bytes()
-        );
-
-        self.finalized = Some(buf);
+        // TODO: remove length, is served by the EDAT/FIDX length stuff
+        self.write_buf(ltvc(b"REND", &buf2));
+        self.finalized = true;
     }
 }
 
 impl Read for PackIn {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if let Some(f_buf) = self.finalized.as_mut() {
-            if f_buf.is_empty() {
-                // Its done, go home
+        if let Some(t_buf) = self.t_buf.as_mut() {
+            if t_buf.is_empty() {
+                self.t_buf = None;
                 Ok(0)
             } else {
+                println!("t_buf1: {:?}", t_buf.len());
                 // Write out what we can
-                let split_at = cmp::min(f_buf.len(), buf.len());
-                let dat: Vec<u8> = f_buf.drain(0..split_at).collect();
+                let split_at = cmp::min(t_buf.len(), buf.len());
+                let dat: Vec<u8> = t_buf.drain(0..split_at).collect();
                 buf[0..split_at].copy_from_slice(&dat[..]);
+
+                println!("t_buf1: {:?}", t_buf.len());
 
                 Ok(dat.len())
             }
         } else {
+            if self.finalized {
+                println!("We are done for good on the PackIn, refuse more data");
+            }
             Ok(0)
         }
     }
 }
 
+// TODO: if parent has any remaining data in buffer, put it here so that it
+// can finish reading out of the buffer before reading form the inner
 pub struct ChunkState<R: Read> {
     hash: String,
     inner: R,
@@ -213,7 +301,9 @@ pub struct ChunkState<R: Read> {
 }
 
 // Read from pack till EoF then time for next chunk to be added
-// TODO: add chunk header+trailer
+// TODO: dump the stream into EDAT
+// TODO: to force ourself to handle sequence of EDAT for now use small
+// chunk size such as 1024
 impl<R: Read> Read for ChunkState<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if !self.finished {
@@ -238,12 +328,41 @@ impl<R: Read> Read for ChunkState<R> {
 }
 
 
+// TODO: have 2 ways to read the packfile, one via the index, in a seek manner, other via start to
+// end
 // Attempt to read a packfile from the backend in a streaming manner
 // TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
 pub struct PackOut {
     idx: Vec<ChunkIdx>,
     buf: Vec<u8>,
 }
+
+
+// Read the buffer to convert to a LTVC and validate
+fn read_ltvc(buf: &[u8]) -> Option<([u8; 4], &[u8])> {
+    let len_buf: [u8; 4] = buf[0..4].try_into().unwrap();
+    let typ_buf: [u8; 4] = buf[4..8].try_into().unwrap();
+
+    let len: usize = u32::from_le_bytes(len_buf) as usize;
+
+    // TODO: this is bad, do this better, don't trust length
+    let dat_buf: &[u8]   = buf[8..(8+len)].try_into().unwrap();
+    let has_buf: [u8; 4] = buf[(8+len)..(8+len+4)].try_into().unwrap();
+
+    let old_hash: u32 = u32::from_le_bytes(has_buf);
+
+    // Validate the hash
+    let mut hash = XxHash32::with_seed(0);
+    hash.write(&typ_buf);
+    hash.write(dat_buf);
+
+    if (hash.finish() as u32) == old_hash {
+        Some((typ_buf, dat_buf))
+    } else {
+        None
+    }
+}
+
 
 impl PackOut {
     pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
@@ -252,31 +371,25 @@ impl PackOut {
 
         println!("Buf.len: {:?}", buf.len());
 
-        // Index, index length, index hash
-        let (i_idx, i_len, i_hash) = {
-            let idx_buf:  [u8; 4]  = (&buf[(buf.len()-(64 + 8))..(buf.len()-(64 + 4))]).try_into().unwrap();
-            let len_buf:  [u8; 4]  = (&buf[(buf.len()-(64 + 4))..(buf.len()-(64 + 0))]).try_into().unwrap();
-            let hash_buf: [u8; 64] = (&buf[(buf.len()-(64 + 0))..]).try_into().unwrap();
+        // Current REND is 20 bytes
+        // TODO: make this more intelligent
+        let (typ, rend_dat) = read_ltvc(&buf[buf.len()-20..buf.len()]).unwrap();
+        if &typ == b"REND" {
+            println!("REND parsing");
+        }
+
+        let (i_idx, i_len) = {
+            let idx_buf:  [u8; 4]  = rend_dat[0..4].try_into().unwrap();
+            let len_buf:  [u8; 4]  = rend_dat[4..8].try_into().unwrap();
 
             (
                 u32::from_le_bytes(idx_buf) as usize,
                 u32::from_le_bytes(len_buf) as usize,
-                from_utf8(&hash_buf).unwrap().to_string(),
             )
         };
 
         println!("Index offset: {:?}", i_idx);
         println!("Index length: {:?}", i_len);
-        println!("Index hash: {:?}", i_hash);
-
-        // Ingest the index then validate the hash
-        let mut idx_buf: &[u8] = &buf[i_idx..(i_idx+i_len)];
-
-        // TODO: convert both back to actual hash
-        let new_i_hash = hash(key, &mut idx_buf).unwrap().to_hex().to_string();
-
-        println!("New Index hash: {:?}", new_i_hash);
-        println!("Equal hash: {:?}", i_hash == new_i_hash);
 
         // Deserialize the index
         let mut idx_buf: &[u8] = &buf[i_idx..(i_idx+i_len)];
@@ -296,6 +409,12 @@ impl PackOut {
             if c.hash == hash {
                 let mut buf: Vec<u8> = Vec::new();
                 buf.extend_from_slice(&self.buf[c.start_idx..(c.start_idx+c.length)]);
+
+                println!("Found!");
+                println!("\tCached idx: {:?}, length: {:?}", c.start_idx, c.length);
+                println!("\tActual idx: {:?}, End idx: {:?}", c.start_idx, (c.start_idx+c.length));
+                println!("\tbuf: {:?}", buf.len());
+
                 return Some(buf);
             }
         }
@@ -306,7 +425,7 @@ impl PackOut {
 // copy paste from main.rs for now
 // TODO: can probs make it into a hash struct so we dont need to pass the key around
 fn hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
-    let mut hash = Hasher::new_keyed(&key.0);
+    let mut hash = blake3::Hasher::new_keyed(&key.0);
     copy(data, &mut hash)?;
     Ok(hash.finalize())
 }

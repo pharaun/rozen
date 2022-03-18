@@ -69,10 +69,14 @@ pub fn snapshot<B: Backend>(
                                 let mut chunk = pack.begin_write(content_hash.as_str(), &mut enc);
 
                                 // Spool the pack content to this point into multiwrite
+                                // TODO: fraught, the transition into chunk mode should carry the
+                                // buffer over from pack, and drain that first
+                                multipart.write(&mut pack).unwrap();
                                 multipart.write(&mut chunk).unwrap();
 
                                 // Finalize the chunk write
                                 pack.finish_write(chunk);
+                                multipart.write(&mut pack).unwrap();
 
                                 // Load file info into index
                                 // Snapshot will be '<packfile-id>:<hash-id>' to pull out
