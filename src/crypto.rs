@@ -182,6 +182,7 @@ fn crypt_read<R: Read, E: Engine>(
     Ok(buf_write)
 }
 
+// TODO: copypasted this into the pack file
 fn fill_buf<R: Read>(data: &mut R, buf: &mut [u8]) -> std::io::Result<(bool, usize)> {
     let mut buf_read = 0;
 
@@ -195,6 +196,7 @@ fn fill_buf<R: Read>(data: &mut R, buf: &mut [u8]) -> std::io::Result<(bool, usi
     Ok((false, buf_read))
 }
 
+// TODO: copypasted this into the pack file
 fn flush_buf(in_buf: &mut Vec<u8>, buf: &mut [u8]) -> usize {
     // 1. Grab slice [0...min(buf.len(), in_buf.len()))
     let split_at = cmp::min(in_buf.len(), buf.len());

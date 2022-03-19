@@ -201,12 +201,18 @@ impl PackIn {
                 )
             );
 
+            // EDAT chunk size
+            let in_buf = [0u8; CHUNK_SIZE];
+            let out_buf = Vec::with_capacity(CHUNK_SIZE);
+
             ChunkState {
                 hash: hash.to_string(),
                 inner: reader,
                 len: 0,
                 idx: self.p_idx,
                 finished: false,
+                in_buf: Box::new(in_buf),
+                out_buf,
             }
         } else {
             panic!("SYSTEM-ERROR, this is finalized and got more ChunkState");
@@ -242,6 +248,7 @@ impl PackIn {
         );
 
         // Dump IDX into 1 large EDAT for now
+        // TODO: in real implementation it should chunk
         let index = bincode::serialize(&self.idx).unwrap();
 
         let comp = Encoder::new(
@@ -290,6 +297,10 @@ impl Read for PackIn {
     }
 }
 
+
+// 1Kb EDAT frame buffer
+const CHUNK_SIZE: usize = 1 * 1024;
+
 // TODO: if parent has any remaining data in buffer, put it here so that it
 // can finish reading out of the buffer before reading form the inner
 pub struct ChunkState<R: Read> {
@@ -298,33 +309,79 @@ pub struct ChunkState<R: Read> {
     len: usize,
     idx: usize,
     finished: bool,
+
+    // TODO: can probs improve the effency of this and not double buffer or etc
+    in_buf: Box<[u8]>,
+    out_buf: Vec<u8>,
 }
 
 // Read from pack till EoF then time for next chunk to be added
-// TODO: dump the stream into EDAT
 // TODO: to force ourself to handle sequence of EDAT for now use small
 // chunk size such as 1024
 impl<R: Read> Read for ChunkState<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if !self.finished {
-            // Read from chunk reader till done
-            let c_len = self.inner.read(buf).unwrap();
+        let mut buf_write: usize = 0;
 
-            // Manage the len and update p_idx
-            self.len += c_len;
+        // 1. If buf_write == buf.len() return
+        while buf_write < buf.len() {
+            if !self.out_buf.is_empty() {
+                // 2. If data in out_buf, flush into buf first
+                buf_write += flush_buf(&mut self.out_buf, &mut buf[buf_write..]);
 
-            // Check if we hit EOF?
-            if c_len == 0 {
-                // We hit eof of the underlaying file
-                self.finished = true;
+            } else {
+                // 3. Read till there is 1Kb of data in in_buf
+                match fill_buf(&mut self.inner, &mut self.in_buf)? {
+                    // 4a. Nothing left in in_buf, is EoF, and is not finalize, finalize
+                    (true, 0) if !self.finished => {
+                        println!("Finalizing EDAT");
+                        self.finished = true;
+                    },
+
+                    // 4b. Nothing left in [in_buf, out_buf] and is EoF, exit
+                    (true, 0) if self.out_buf.is_empty() => {
+                        self.len += buf_write;
+                        return Ok(buf_write);
+                    },
+
+                    // 4c. Copy in_buf -> out_buf
+                    // 4d. Final read, finalize
+                    (_eof, in_len) => {
+                        self.out_buf = ltvc(b"EDAT", &mut self.in_buf[..in_len]);
+                        println!("dump2 - out: {:?}, in: {:?}", self.out_buf.len(), self.in_buf.len());
+                    },
+                }
             }
-
-            Ok(c_len)
-        } else {
-            // We aren't finalized but we don't have further data yet
-            Ok(0)
         }
+
+        self.len += buf_write;
+        Ok(buf_write)
     }
+}
+
+// TODO: copypasted this from crypto
+fn fill_buf<R: Read>(data: &mut R, buf: &mut [u8]) -> std::io::Result<(bool, usize)> {
+    let mut buf_read = 0;
+
+    while buf_read < buf.len() {
+        match data.read(&mut buf[buf_read..]) {
+            Ok(0)  => return Ok((true, buf_read)),
+            Ok(x)  => buf_read += x,
+            Err(e) => return Err(e),
+        };
+    }
+    Ok((false, buf_read))
+}
+
+// TODO: copypasted this from crypto
+fn flush_buf(in_buf: &mut Vec<u8>, buf: &mut [u8]) -> usize {
+    // 1. Grab slice [0...min(buf.len(), in_buf.len()))
+    let split_at = cmp::min(in_buf.len(), buf.len());
+    // 2. Copy into buf
+    buf[..split_at].clone_from_slice(&in_buf[..split_at]);
+    // 3. Drop range from &mut in_buf
+    in_buf.drain(..split_at);
+
+    split_at
 }
 
 
@@ -342,7 +399,7 @@ pub struct PackOut {
 // TODO: consider a iterator/streaming option where it takes a buffer
 // that begins on a chunk and then it streams the chunk+data one block at a time
 // TODO: make sure to reject too large chunk size for preventing out of memory bugs
-fn read_ltvc(buf: &[u8]) -> Option<([u8; 4], &[u8])> {
+fn read_ltvc(buf: &[u8]) -> Option<(usize, [u8; 4], &[u8])> {
     let len_buf: [u8; 4] = buf[0..4].try_into().unwrap();
     let typ_buf: [u8; 4] = buf[4..8].try_into().unwrap();
 
@@ -359,8 +416,10 @@ fn read_ltvc(buf: &[u8]) -> Option<([u8; 4], &[u8])> {
     hash.write(&typ_buf);
     hash.write(dat_buf);
 
+    let whole_len = 4 + 4 + len + 4;
+
     if (hash.finish() as u32) == old_hash {
-        Some((typ_buf, dat_buf))
+        Some((whole_len, typ_buf, dat_buf))
     } else {
         None
     }
@@ -376,7 +435,7 @@ impl PackOut {
 
         // Current REND is 16 bytes
         // TODO: make this more intelligent
-        let (typ, rend_dat) = read_ltvc(&buf[buf.len()-16..buf.len()]).unwrap();
+        let (_, typ, rend_dat) = read_ltvc(&buf[buf.len()-16..buf.len()]).unwrap();
         if &typ == b"REND" {
             println!("REND parsing");
         }
@@ -389,13 +448,13 @@ impl PackOut {
         println!("Index offset: {:?}", i_idx);
 
         // FIDX is 12 bytes, ingest that
-        let (typ, _) = read_ltvc(&buf[i_idx..(i_idx+12)]).unwrap();
+        let (_, typ, _) = read_ltvc(&buf[i_idx..(i_idx+12)]).unwrap();
         if &typ == b"FIDX" {
             println!("FIDX parsing");
         }
 
         // Fetch the EDAT
-        let (typ, edat) = read_ltvc(&buf[(i_idx+12)..]).unwrap();
+        let (_, typ, edat) = read_ltvc(&buf[(i_idx+12)..]).unwrap();
         if &typ == b"EDAT" {
             println!("EDAT parsing");
         }
@@ -428,7 +487,21 @@ impl PackOut {
                 println!("\tActual idx: {:?}, End idx: {:?}", c.start_idx, (c.start_idx+c.length));
                 println!("\tbuf: {:?}", buf.len());
 
-                return Some(buf);
+                println!("\tunpack EDAT");
+                let mut out_buf: Vec<u8> = Vec::new();
+                let mut out_idx: usize = 0;
+
+                while out_idx != buf.len() {
+                    let (read_len, _typ, edat_dat) = read_ltvc(&buf[out_idx..]).unwrap();
+                    out_idx += read_len;
+                    out_buf.extend(edat_dat);
+
+                    println!(
+                        "\tEDAT read: rlen: {:?}, left: {:?}, total: {:?}, cur_out_len: {:?}",
+                        read_len, buf.len()-out_idx, buf.len(), out_buf.len());
+                }
+
+                return Some(out_buf);
             }
         }
         None
