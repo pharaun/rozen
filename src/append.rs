@@ -105,6 +105,7 @@ pub fn snapshot<B: Backend>(
 
 
         // Spool the sqlite file into the backend as index
+        // TODO: update this to support the archive file format defined in pack.rs
         let mut s_file = index.unload();
 
         let comp = Encoder::new(

@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 use crate::backend::Backend;
 use crate::backend::MultiPart;
+use crate::buf::flush_buf;
 
 
 pub struct S3 {
@@ -183,11 +184,8 @@ impl Read for S3Read {
         }
 
         // Grab whatever buf.len is off the self.buf
-        let split_at = cmp::min(buf.len(), self.buf.len());
-        let dat: Vec<u8> = self.buf.drain(0..split_at).collect();
-        buf[0..split_at].copy_from_slice(&dat[..]);
-
-        Ok(dat.len())
+        let dat_len = flush_buf(&mut self.buf, buf);
+        Ok(dat_len)
     }
 }
 

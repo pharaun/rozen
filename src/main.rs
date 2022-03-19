@@ -16,6 +16,7 @@ mod crypto;
 mod append;
 mod index;
 mod pack;
+mod buf;
 use crate::index::Index;
 
 // Configuration

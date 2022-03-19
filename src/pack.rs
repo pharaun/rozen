@@ -102,7 +102,6 @@
 
 use std::io::{copy, Read};
 use std::cmp;
-use blake3::Hash;
 use std::convert::TryInto;
 use std::str::from_utf8;
 use hex;
@@ -115,6 +114,12 @@ use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
 
 use crate::crypto;
+use crate::buf::flush_buf;
+use crate::buf::fill_buf;
+
+// Selected via https://datatracker.ietf.org/doc/html/draft-main-magic-00
+const MAGIC: [u8; 8] = [0x65, 0x86, 0x89, 0xd8, 0x27, 0xb0, 0xbb, 0x9b];
+
 
 // Attempt to on the fly write chunks into a packfile to a backend
 pub struct PackIn {
@@ -136,10 +141,6 @@ struct ChunkIdx {
     hash: String,
 }
 
-fn magic() -> Vec<u8> {
-    vec![137, b'R', b'O', b'Z', 13, 10, 26, 10]
-}
-
 // TODO: Evaulate the need for a hash
 // Length, Type, Value, xxhash32 of Type+Value
 // u32, u32, [u8; N], u32
@@ -155,7 +156,7 @@ fn ltvc(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
     buf.extend_from_slice(data);
     buf.extend_from_slice(&(hash.finish() as u32).to_le_bytes());
 
-    if let Ok(out_str) = std::str::from_utf8(chunk_type) {
+    if let Ok(out_str) = from_utf8(chunk_type) {
         println!("Serializing: {:?}", out_str);
     }
 
@@ -174,7 +175,7 @@ impl PackIn {
             finalized: false,
             p_idx: 0,
         };
-        pack.write_buf(magic());
+        pack.write_buf(MAGIC.to_vec());
         pack
     }
 
@@ -278,15 +279,9 @@ impl Read for PackIn {
                 self.t_buf = None;
                 Ok(0)
             } else {
-                println!("t_buf1: {:?}", t_buf.len());
                 // Write out what we can
-                let split_at = cmp::min(t_buf.len(), buf.len());
-                let dat: Vec<u8> = t_buf.drain(0..split_at).collect();
-                buf[0..split_at].copy_from_slice(&dat[..]);
-
-                println!("t_buf1: {:?}", t_buf.len());
-
-                Ok(dat.len())
+                let dat_len = flush_buf(t_buf, buf);
+                Ok(dat_len)
             }
         } else {
             if self.finalized {
@@ -358,31 +353,6 @@ impl<R: Read> Read for ChunkState<R> {
     }
 }
 
-// TODO: copypasted this from crypto
-fn fill_buf<R: Read>(data: &mut R, buf: &mut [u8]) -> std::io::Result<(bool, usize)> {
-    let mut buf_read = 0;
-
-    while buf_read < buf.len() {
-        match data.read(&mut buf[buf_read..]) {
-            Ok(0)  => return Ok((true, buf_read)),
-            Ok(x)  => buf_read += x,
-            Err(e) => return Err(e),
-        };
-    }
-    Ok((false, buf_read))
-}
-
-// TODO: copypasted this from crypto
-fn flush_buf(in_buf: &mut Vec<u8>, buf: &mut [u8]) -> usize {
-    // 1. Grab slice [0...min(buf.len(), in_buf.len()))
-    let split_at = cmp::min(in_buf.len(), buf.len());
-    // 2. Copy into buf
-    buf[..split_at].clone_from_slice(&in_buf[..split_at]);
-    // 3. Drop range from &mut in_buf
-    in_buf.drain(..split_at);
-
-    split_at
-}
 
 
 // TODO: have 2 ways to read the packfile, one via the index, in a seek manner, other via start to
@@ -506,12 +476,4 @@ impl PackOut {
         }
         None
     }
-}
-
-// copy paste from main.rs for now
-// TODO: can probs make it into a hash struct so we dont need to pass the key around
-fn hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
-    let mut hash = blake3::Hasher::new_keyed(&key.0);
-    copy(data, &mut hash)?;
-    Ok(hash.finalize())
 }
