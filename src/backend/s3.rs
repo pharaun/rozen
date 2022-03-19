@@ -1,5 +1,6 @@
 use std::cmp;
 use std::io::{Read, copy};
+use std::mem;
 use std::error::Error;
 use tokio::runtime::Runtime;
 use aws_sdk_s3::Client;
@@ -61,6 +62,8 @@ impl Backend for S3 {
         let mut buf = Vec::new();
         copy(&mut reader, &mut buf).unwrap();
 
+        println!("S3-write: {:?}", buf.len());
+
         let stream = ByteStream::from(buf);
 
         let call = self.client.put_object().
@@ -111,6 +114,8 @@ impl Backend for S3 {
             key: key.to_string(),
             id: res.upload_id.unwrap(),
             part: Vec::new(),
+            part_id: 1,
+            t_buf: Vec::new(),
         }))
     }
 }
@@ -121,40 +126,69 @@ struct S3Multi {
     key: String,
     id: String,
     part: Vec<CompletedPart>,
+    part_id: i32,
+
+    // Buffer it till 6mb then upload it as a new part
+    t_buf: Vec<u8>,
+}
+
+const BUFFER_TARGET: usize = 6 * 1024 * 1024;
+
+impl S3Multi {
+    fn upload_part(&mut self, last: bool) {
+        println!("S3-multi-write: last: {:?}", last);
+
+        // If last part to upload *or* at least 6mb accumulated upload
+        if (last && !self.t_buf.is_empty())|| self.t_buf.len() >= BUFFER_TARGET {
+            println!("S3-multi-write: UPLOADING");
+
+            // Swap the self.t_buf with a empty one and own it
+            let mut t_buf = Vec::new();
+            mem::swap(&mut self.t_buf, &mut t_buf);
+
+            let stream = ByteStream::from(t_buf);
+            let call = self.client.upload_part().
+                body(stream).
+                bucket("test").
+                key(self.key.clone()).
+                upload_id(self.id.clone()).
+                part_number(self.part_id).
+                send();
+
+            let res = self.rt.block_on(async {call.await}).unwrap();
+
+            // Collect info to make a CompletePart to then record in finalize
+            self.part.push(
+                CompletedPart::builder().
+                    e_tag(res.e_tag.unwrap()).
+                    part_number(self.part_id).
+                    build()
+            );
+
+            // Increment the part number, clear the buffer
+            self.part_id += 1;
+        }
+    }
 }
 
 impl MultiPart for S3Multi {
     fn write(&mut self, reader: &mut dyn Read) -> Result<(), String> {
-        // TODO: for now do it in just one shot and buffer it all in memory
         let mut buf = Vec::new();
         copy(reader, &mut buf).unwrap();
 
-        let stream = ByteStream::from(buf);
+        println!("S3-multi-write: {:?}", buf.len());
+        println!("S3-multi-write: t_buf: {:?}", self.t_buf.len());
 
-        // TODO: we just hardcode in part number (1) but we should
-        // collect it and store it in order the parts should be in
-        let call = self.client.upload_part().
-            body(stream).
-            bucket("test").
-            key(self.key.clone()).
-            upload_id(self.id.clone()).
-            part_number(1).
-            send();
-
-        let res = self.rt.block_on(async {call.await}).unwrap();
-
-        // Collect info to make a CompletePart to then record in finalize
-        self.part.push(
-            CompletedPart::builder().
-                e_tag(res.e_tag.unwrap()).
-                part_number(1).
-                build()
-        );
+        // append to t_buf
+        self.t_buf.extend(buf);
+        self.upload_part(false);
 
         Ok(())
     }
 
-    fn finalize(self: Box<Self>) -> Result<(), String> {
+    fn finalize(mut self: Box<Self>) -> Result<(), String> {
+        self.upload_part(true);
+
         let call = self.client.complete_multipart_upload().
             bucket("test").
             key(self.key.clone()).

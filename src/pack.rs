@@ -416,6 +416,7 @@ impl PackOut {
         };
 
         println!("Index offset: {:?}", i_idx);
+        println!("buf-len: {:?}", buf.len());
 
         // FIDX is 12 bytes, ingest that
         let (_, typ, _) = read_ltvc(&buf[i_idx..(i_idx+12)]).unwrap();
