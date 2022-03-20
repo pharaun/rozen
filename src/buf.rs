@@ -64,6 +64,16 @@ mod test_flush_buf {
     use super::*;
 
     #[test]
+    fn zero_buf() {
+        let mut in_buf: Vec<u8> = vec![1, 2];
+        let mut buf: [u8; 0] = [0; 0];
+
+        assert_eq!(flush_buf(&mut in_buf, &mut buf), 0);
+        assert_eq!(&buf, &[]);
+        assert_eq!(&in_buf[..], &[1, 2]);
+    }
+
+    #[test]
     fn big_buf_small_vec() {
         let mut in_buf: Vec<u8> = vec![1, 2];
         let mut buf: [u8; 4] = [0; 4];

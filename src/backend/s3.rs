@@ -213,13 +213,7 @@ struct S3Read {
 
 impl Read for S3Read {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-
-        // Grab whatever buf.len is off the self.buf
-        let dat_len = flush_buf(&mut self.buf, buf);
-        Ok(dat_len)
+        Ok(flush_buf(&mut self.buf, buf))
     }
 }
 

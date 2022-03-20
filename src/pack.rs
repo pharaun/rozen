@@ -280,8 +280,7 @@ impl Read for PackIn {
                 Ok(0)
             } else {
                 // Write out what we can
-                let dat_len = flush_buf(t_buf, buf);
-                Ok(dat_len)
+                Ok(flush_buf(t_buf, buf))
             }
         } else {
             if self.finalized {
