@@ -12,3 +12,4 @@ Cargo.lock
 
 # Seaweedfs data directory for a s3 test server
 /data
+weed
