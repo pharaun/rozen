@@ -94,7 +94,7 @@ fn main() {
     // Grab db out of backend and put it to a temp handle
     let dt_fmt = datetime.format(&Rfc3339).unwrap();
     let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
-    let mut index_content = Backend::read(&mut backend, &filename).unwrap();
+    let mut index_content = Backend::read_filename(&mut backend, &filename).unwrap();
     let mut dec = crypto::decrypt(&key, &mut index_content).unwrap();
     let mut und = Decoder::new(&mut dec).unwrap();
     let index = Index::load(&mut und);
@@ -115,7 +115,7 @@ fn main() {
         if !pack_cache.contains_key(&pack) {
             println!("Loading: {:?}", pack);
 
-            let mut pack_read = Backend::read(&mut backend, &pack).unwrap();
+            let mut pack_read = Backend::read(&mut backend, &hash::from_hex(&pack).unwrap()).unwrap();
             let pack_file = pack::PackOut::load(&mut pack_read, &key);
 
             pack_cache.insert(
@@ -125,7 +125,7 @@ fn main() {
         }
 
         // Read from the packfile
-        let data = pack_cache.get(&pack).unwrap().find(&hash).unwrap();
+        let data = pack_cache.get(&pack).unwrap().find(hash::from_hex(hash).unwrap()).unwrap();
 
         // Process the data
         let mut dec = crypto::decrypt(&key, &data[..]).unwrap();

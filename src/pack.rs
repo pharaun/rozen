@@ -103,7 +103,6 @@
 use std::io::{copy, Read};
 use std::convert::TryInto;
 use std::str::from_utf8;
-use hex;
 use serde::Serialize;
 use serde::Deserialize;
 use bincode;
@@ -121,7 +120,7 @@ const MAGIC: [u8; 8] = [0x65, 0x86, 0x89, 0xd8, 0x27, 0xb0, 0xbb, 0x9b];
 
 // Attempt to on the fly write chunks into a packfile to a backend
 pub struct PackIn {
-    pub id: String,
+    pub id: hash::Hash,
     idx: Vec<ChunkIdx>,
 
     // TODO: Not sure how to hold state bits yet
@@ -136,7 +135,7 @@ pub struct PackIn {
 struct ChunkIdx {
     start_idx: usize,
     length: usize,
-    hash: String,
+    hash: hash::Hash,
 }
 
 // TODO: Evaulate the need for a hash
@@ -164,9 +163,10 @@ fn ltvc(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
 impl PackIn {
     // Use a crypto grade random key for the packfile-id
     pub fn new() -> Self {
+        // TODO: do this better - should be a typed pseudo hash instead of a fake hash
         let id = crypto::gen_key();
         let mut pack = PackIn {
-            id: hex::encode(id),
+            id: hash::Hash::from(id.0),
             idx: Vec::new(),
             // Start with the magic bits for the file format, inspired by PNG
             t_buf: None,
@@ -190,13 +190,13 @@ impl PackIn {
 
     // TODO: should have integrity check to make sure the current reader is
     // done (aka unset otherwise it errors)
-    pub fn begin_write<R: Read>(&mut self, hash: &str, reader: R) -> ChunkState<R> {
+    pub fn begin_write<R: Read>(&mut self, hash: &hash::Hash, reader: R) -> ChunkState<R> {
         if !self.finalized {
             // Dump the FHDR chunk
             self.write_buf(
                 ltvc(
                     b"FHDR",
-                    hash.to_string().as_bytes()
+                    hash.as_bytes()
                 )
             );
 
@@ -205,7 +205,7 @@ impl PackIn {
             let out_buf = Vec::with_capacity(CHUNK_SIZE);
 
             ChunkState {
-                hash: hash.to_string(),
+                hash: hash.clone(),
                 inner: reader,
                 len: 0,
                 idx: self.p_idx,
@@ -296,7 +296,7 @@ const CHUNK_SIZE: usize = 1 * 1024;
 // TODO: if parent has any remaining data in buffer, put it here so that it
 // can finish reading out of the buffer before reading form the inner
 pub struct ChunkState<R: Read> {
-    hash: String,
+    hash: hash::Hash,
     inner: R,
     len: usize,
     idx: usize,
@@ -444,7 +444,7 @@ impl PackOut {
         }
     }
 
-    pub fn find(&self, hash: &str) -> Option<Vec<u8>> {
+    pub fn find(&self, hash: hash::Hash) -> Option<Vec<u8>> {
         for c in self.idx.iter() {
             if c.hash == hash {
                 let mut buf: Vec<u8> = Vec::new();

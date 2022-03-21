@@ -3,6 +3,8 @@ use rusqlite as rs;
 use std::io::{Seek, SeekFrom, copy, Read};
 use rusqlite::Connection;
 
+use crate::hash;
+
 pub struct Index {
     file: std::fs::File,
     // Don't use this but we need to keep it around till we are done with the db
@@ -37,7 +39,7 @@ impl Index {
     }
 
     // TODO: improve the types
-    pub fn insert_file(&self, path: &std::path::Path, pack: Option<&str>, hash: &str) {
+    pub fn insert_file(&self, path: &std::path::Path, pack: Option<&hash::Hash>, hash: &hash::Hash) {
         let mut file_stmt = self.conn.prepare_cached(
             "INSERT INTO files
              (path, permission, pack_hash, content_hash)
@@ -49,8 +51,8 @@ impl Index {
         file_stmt.execute(rs::params![
             format!("{}", path.display()),
             0000,
-            pack,
-            hash,
+            pack.map(|h| hash::to_hex(h)),
+            hash::to_hex(hash),
         ]).unwrap();
     }
 

@@ -47,7 +47,7 @@ pub fn snapshot<B: Backend>(
                                 let content_hash = hash::hash(
                                     &key,
                                     &mut file_data
-                                ).unwrap().to_hex().to_string();
+                                ).unwrap();
 
                                 // TODO: need to make sure that each stage always calls
                                 // some form of finalize on its into_inner reader object
@@ -65,7 +65,7 @@ pub fn snapshot<B: Backend>(
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                 // Stream the data into the pack
-                                let mut chunk = pack.begin_write(content_hash.as_str(), &mut enc);
+                                let mut chunk = pack.begin_write(&content_hash, &mut enc);
 
                                 // Spool the pack content to this point into multiwrite
                                 // TODO: fraught, the transition into chunk mode should carry the
@@ -81,7 +81,11 @@ pub fn snapshot<B: Backend>(
                                 // Snapshot will be '<packfile-id>:<hash-id>' to pull out
                                 //  the content or can just be a list of <hash-id> then another
                                 //  list of <packfile-id> with <hash-id>s
-                                index.insert_file(e.path(), Some(&pack.id), content_hash.as_str());
+                                index.insert_file(
+                                    e.path(),
+                                    Some(&pack.id),
+                                    &content_hash
+                                );
                             } else {
                                 println!("SKIP: {}", e.path().display());
                             }
@@ -119,7 +123,7 @@ pub fn snapshot<B: Backend>(
         let dt_fmt = datetime.format(&Rfc3339).unwrap();
         let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
         println!("INDEX: {:?}", filename);
-        backend.write(&filename, &mut enc).unwrap();
+        backend.write_filename(&filename, &mut enc).unwrap();
     }
 }
 

@@ -3,6 +3,7 @@ use vfs::{VfsPath, MemoryFS};
 
 use crate::backend::Backend;
 use crate::backend::MultiPart;
+use crate::hash;
 
 pub struct MemoryVFS {
     root: VfsPath
@@ -35,20 +36,20 @@ impl Backend for MemoryVFS {
         ))
     }
 
-    fn write<R: Read>(&self, key: &str, mut reader: R) -> Result<(), String> {
+    fn write_filename<R: Read>(&self, filename: &str, mut reader: R) -> Result<(), String> {
         let path = self.root
             .join("data").expect("data-dir")
-            .join(key).expect("data-dir/key-file");
+            .join(filename).expect("data-dir/key-file");
 
         let mut write_to = path.create_file().map_err(|err| err.to_string())?;
         copy(&mut reader, &mut write_to).unwrap();
         Ok(())
     }
 
-    fn read(&mut self, key: &str) -> Result<Box<dyn Read>, String> {
+    fn read_filename(&mut self, filename: &str) -> Result<Box<dyn Read>, String> {
         let path = self.root
             .join("data").expect("data-dir")
-            .join(key).expect("data-dir/key-file");
+            .join(filename).expect("data-dir/key-file");
 
         match path.open_file() {
             Ok(f)  => Ok(Box::new(f)),
@@ -56,10 +57,23 @@ impl Backend for MemoryVFS {
         }
     }
 
-    fn multi_write(&self, key: &str) -> Result<Box<dyn MultiPart>, String> {
+    fn write<R: Read>(&self, key: &hash::Hash, reader: R) -> Result<(), String> {
+        self.write_filename(
+            &hash::to_hex(key),
+            reader
+        )
+    }
+
+    fn read(&mut self, key: &hash::Hash) -> Result<Box<dyn Read>, String> {
+        self.read_filename(
+            &hash::to_hex(key),
+        )
+    }
+
+    fn multi_write(&self, key: &hash::Hash) -> Result<Box<dyn MultiPart>, String> {
         let path = self.root
             .join("data").expect("data-dir")
-            .join(key).expect("data-dir/key-file");
+            .join(&hash::to_hex(key)).expect("data-dir/key-file");
 
         let write_to = path.create_file().map_err(|err| err.to_string())?;
 

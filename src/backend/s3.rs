@@ -16,6 +16,7 @@ use std::rc::Rc;
 use crate::backend::Backend;
 use crate::backend::MultiPart;
 use crate::buf::flush_buf;
+use crate::hash;
 
 
 pub struct S3 {
@@ -54,7 +55,7 @@ impl Backend for S3 {
         ))
     }
 
-    fn write<R: Read>(&self, key: &str, mut reader: R) -> Result<(), String> {
+    fn write_filename<R: Read>(&self, filename: &str, mut reader: R) -> Result<(), String> {
         // TODO: Less bad, still buffer it all in memory, but we can at least
         // manage the read here so we should be able to do something reasonable
         // here at some point
@@ -68,7 +69,7 @@ impl Backend for S3 {
         let call = self.client.put_object().
             body(stream).
             bucket("test").
-            key(key).
+            key(filename).
             send();
 
         let _res = self.rt.block_on(async {call.await}).unwrap();
@@ -76,11 +77,11 @@ impl Backend for S3 {
         Ok(())
     }
 
-    fn read(&mut self, key: &str) -> Result<Box<dyn Read>, String> {
+    fn read_filename(&mut self, filename: &str) -> Result<Box<dyn Read>, String> {
         // Do s3 dance to fetch a object and buffer it locally
         let call = self.client.get_object().
             bucket("test").
-            key(key).
+            key(filename).
             send();
 
         let res = self.rt.block_on(async {call.await}).unwrap();
@@ -99,10 +100,23 @@ impl Backend for S3 {
         }))
     }
 
-    fn multi_write(&self, key: &str) -> Result<Box<dyn MultiPart>, String> {
+    fn write<R: Read>(&self, key: &hash::Hash, reader: R) -> Result<(), String> {
+        self.write_filename(
+            &hash::to_hex(key),
+            reader
+        )
+    }
+
+    fn read(&mut self, key: &hash::Hash) -> Result<Box<dyn Read>, String> {
+        self.read_filename(
+            &hash::to_hex(key),
+        )
+    }
+
+    fn multi_write(&self, key: &hash::Hash) -> Result<Box<dyn MultiPart>, String> {
         let call = self.client.create_multipart_upload().
             bucket("test").
-            key(key).
+            key(&hash::to_hex(key)).
             send();
 
         let res = self.rt.block_on(async {call.await}).unwrap();
@@ -110,7 +124,7 @@ impl Backend for S3 {
         Ok(Box::new(S3Multi {
             client: self.client.clone(),
             rt: self.rt.clone(),
-            key: key.to_string(),
+            key: key.clone(),
             id: res.upload_id.unwrap(),
             part: Vec::new(),
             part_id: 1,
@@ -122,7 +136,7 @@ impl Backend for S3 {
 struct S3Multi {
     client: Rc<Client>,
     rt: Rc<Runtime>,
-    key: String,
+    key: hash::Hash,
     id: String,
     part: Vec<CompletedPart>,
     part_id: i32,
@@ -149,7 +163,7 @@ impl S3Multi {
             let call = self.client.upload_part().
                 body(stream).
                 bucket("test").
-                key(self.key.clone()).
+                key(hash::to_hex(&self.key)).
                 upload_id(self.id.clone()).
                 part_number(self.part_id).
                 send();
@@ -190,7 +204,7 @@ impl MultiPart for S3Multi {
 
         let call = self.client.complete_multipart_upload().
             bucket("test").
-            key(self.key.clone()).
+            key(hash::to_hex(&self.key)).
             upload_id(self.id.clone()).
             multipart_upload(
                 CompletedMultipartUpload::builder().
