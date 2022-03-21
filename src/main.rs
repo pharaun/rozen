@@ -1,8 +1,6 @@
 use ignore::WalkBuilder;
 
 use std::io::{copy, Read};
-use blake3::Hasher;
-use blake3::Hash;
 use zstd::stream::read::Decoder;
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -17,6 +15,7 @@ mod append;
 mod index;
 mod pack;
 mod buf;
+mod hash;
 use crate::index::Index;
 
 // Configuration
@@ -129,9 +128,9 @@ fn main() {
         // Process the data
         let mut dec = crypto::decrypt(&key, &data[..]).unwrap();
         let mut und = Decoder::new(&mut dec).unwrap();
-        let content_hash = test_hash(&key, &mut und).unwrap();
+        let content_hash = hash::hash(&key, &mut und).unwrap();
 
-        match Hash::from_hex(hash.clone()) {
+        match hash::from_hex(hash.clone()) {
             Ok(data_hash) => {
                 let is_same = data_hash == content_hash;
 
@@ -145,12 +144,4 @@ fn main() {
         }
     });
     index.close();
-}
-
-
-// copy pasted into appendonly for now
-fn test_hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
-    let mut hash = Hasher::new_keyed(&key.0);
-    copy(data, &mut hash)?;
-    Ok(hash.finalize())
 }

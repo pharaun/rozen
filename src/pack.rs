@@ -108,14 +108,13 @@ use hex;
 use serde::Serialize;
 use serde::Deserialize;
 use bincode;
-use twox_hash::XxHash32;
-use std::hash::Hasher;
 use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
 
 use crate::crypto;
 use crate::buf::flush_buf;
 use crate::buf::fill_buf;
+use crate::hash;
 
 // Selected via https://datatracker.ietf.org/doc/html/draft-main-magic-00
 const MAGIC: [u8; 8] = [0x65, 0x86, 0x89, 0xd8, 0x27, 0xb0, 0xbb, 0x9b];
@@ -145,7 +144,7 @@ struct ChunkIdx {
 // Length, Type, Value, xxhash32 of Type+Value
 // u32, u32, [u8; N], u32
 fn ltvc(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
-    let mut hash = XxHash32::with_seed(0);
+    let mut hash = hash::XxHash::new();
     hash.write(chunk_type);
     hash.write(data);
 
@@ -154,7 +153,7 @@ fn ltvc(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
     buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
     buf.extend_from_slice(chunk_type);
     buf.extend_from_slice(data);
-    buf.extend_from_slice(&(hash.finish() as u32).to_le_bytes());
+    buf.extend_from_slice(&hash.finish().to_le_bytes());
 
     if let Ok(out_str) = from_utf8(chunk_type) {
         println!("Serializing: {:?}", out_str);
@@ -381,13 +380,13 @@ fn read_ltvc(buf: &[u8]) -> Option<(usize, [u8; 4], &[u8])> {
     let old_hash: u32 = u32::from_le_bytes(has_buf);
 
     // Validate the hash
-    let mut hash = XxHash32::with_seed(0);
+    let mut hash = hash::XxHash::new();
     hash.write(&typ_buf);
     hash.write(dat_buf);
 
     let whole_len = 4 + 4 + len + 4;
 
-    if (hash.finish() as u32) == old_hash {
+    if hash.finish()  == old_hash {
         Some((whole_len, typ_buf, dat_buf))
     } else {
         None

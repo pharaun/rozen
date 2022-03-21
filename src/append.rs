@@ -1,6 +1,4 @@
 use std::io::{Seek, SeekFrom, copy, Read};
-use blake3::Hasher;
-use blake3::Hash;
 use zstd::stream::read::Encoder;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -9,6 +7,7 @@ use crate::index::Index;
 use crate::crypto;
 use crate::backend::Backend;
 use crate::pack::PackIn;
+use crate::hash;
 
 pub fn snapshot<B: Backend>(
     key: &crypto::Key,
@@ -45,7 +44,7 @@ pub fn snapshot<B: Backend>(
                                 // TODO: stop passing around hash strings, pass around hash
                                 // result, then switch to string/bytes when needed at the
                                 // destination
-                                let content_hash = hash(
+                                let content_hash = hash::hash(
                                     &key,
                                     &mut file_data
                                 ).unwrap().to_hex().to_string();
@@ -124,9 +123,3 @@ pub fn snapshot<B: Backend>(
     }
 }
 
-// copy paste from main.rs for now
-fn hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
-    let mut hash = Hasher::new_keyed(&key.0);
-    copy(data, &mut hash)?;
-    Ok(hash.finalize())
-}
