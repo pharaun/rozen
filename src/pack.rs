@@ -101,7 +101,6 @@
 //!
 
 use std::io::{copy, Read};
-use std::cmp;
 use std::convert::TryInto;
 use std::str::from_utf8;
 use hex;
@@ -144,16 +143,16 @@ struct ChunkIdx {
 // Length, Type, Value, xxhash32 of Type+Value
 // u32, u32, [u8; N], u32
 fn ltvc(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
-    let mut hash = hash::XxHash::new();
-    hash.write(chunk_type);
-    hash.write(data);
+    let mut hash = hash::Checksum::new();
+    hash.update(chunk_type);
+    hash.update(data);
 
     let mut buf: Vec<u8> = Vec::new();
 
     buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
     buf.extend_from_slice(chunk_type);
     buf.extend_from_slice(data);
-    buf.extend_from_slice(&hash.finish().to_le_bytes());
+    buf.extend_from_slice(&hash.finalize().to_le_bytes());
 
     if let Ok(out_str) = from_utf8(chunk_type) {
         println!("Serializing: {:?}", out_str);
@@ -380,13 +379,13 @@ fn read_ltvc(buf: &[u8]) -> Option<(usize, [u8; 4], &[u8])> {
     let old_hash: u32 = u32::from_le_bytes(has_buf);
 
     // Validate the hash
-    let mut hash = hash::XxHash::new();
-    hash.write(&typ_buf);
-    hash.write(dat_buf);
+    let mut hash = hash::Checksum::new();
+    hash.update(&typ_buf);
+    hash.update(dat_buf);
 
     let whole_len = 4 + 4 + len + 4;
 
-    if hash.finish()  == old_hash {
+    if hash.finalize()  == old_hash {
         Some((whole_len, typ_buf, dat_buf))
     } else {
         None

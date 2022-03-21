@@ -1,6 +1,5 @@
 use ignore::WalkBuilder;
 
-use std::io::{copy, Read};
 use zstd::stream::read::Decoder;
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -38,7 +37,7 @@ struct Source {
     source_type: SourceType,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, Copy)]
 enum SourceType {
     AppendOnly,
 }
@@ -64,13 +63,16 @@ fn main() {
     println!("CONFIG:");
     println!("{:?}", config);
 
-    let target = config.sources.get(0).unwrap().include.get(0).unwrap();
+    let target  = config.sources.get(0).unwrap().include.get(0).unwrap();
+    let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
+    let _stype  = config.sources.get(0).unwrap().source_type;
+
 
     // In memory backend for data storage
     let mut backend = backend::mem::MemoryVFS::new();
 
     // Build a s3 backend here
-    //let mut backend = backend::s3::S3::new_endpoint("http://localhost:8333").unwrap();
+    let mut _backend = backend::s3::S3::new_endpoint("http://localhost:8333").unwrap();
 
     // TODO: should name various things like Index getting its own hashkey
     //  * I-<timestamp> = index

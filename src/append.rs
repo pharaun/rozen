@@ -1,4 +1,4 @@
-use std::io::{Seek, SeekFrom, copy, Read};
+use std::io::{Seek, SeekFrom};
 use zstd::stream::read::Encoder;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;

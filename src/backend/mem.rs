@@ -61,7 +61,7 @@ impl Backend for MemoryVFS {
             .join("data").expect("data-dir")
             .join(key).expect("data-dir/key-file");
 
-        let mut write_to = path.create_file().map_err(|err| err.to_string())?;
+        let write_to = path.create_file().map_err(|err| err.to_string())?;
 
         Ok(Box::new(MemoryWrite {
             inner: Box::new(write_to)

@@ -1,4 +1,3 @@
-use std::cmp;
 use std::io::{Read, copy};
 use std::mem;
 use std::error::Error;
@@ -94,8 +93,8 @@ impl Backend for S3 {
         copy(&mut data_read, &mut buf).unwrap();
 
         Ok(Box::new(S3Read {
-            client: self.client.clone(),
-            rt: self.rt.clone(),
+            _client: self.client.clone(),
+            _rt: self.rt.clone(),
             buf,
         }))
     }
@@ -205,9 +204,10 @@ impl MultiPart for S3Multi {
 }
 
 
+// TODO: properly implement streaming
 struct S3Read {
-    client: Rc<Client>,
-    rt: Rc<Runtime>,
+    _client: Rc<Client>,
+    _rt: Rc<Runtime>,
     buf: Vec<u8>,
 }
 
