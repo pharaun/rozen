@@ -1,5 +1,6 @@
 use std::io::{Read, copy};
 use std::fmt;
+use std::convert::TryInto;
 
 use blake3;
 
@@ -90,10 +91,17 @@ impl<'de> Visitor<'de> for HashVisitor {
             Err(de::Error::invalid_value(Unexpected::Bytes(v), &self))
         }
     }
+
+    fn visit_byte_buf<E: de::Error>(self, v: Vec<u8>) -> Result<Self::Value, E> {
+        v.try_into().map_or_else(
+            |v: Vec<u8>| Err(de::Error::invalid_value(Unexpected::Bytes(&v), &self)),
+            |hash_bytes: [u8; 32]| Ok(Hash::from(hash_bytes))
+        )
+    }
 }
 
 impl<'de> Deserialize<'de> for Hash {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Hash, D::Error> {
-        deserializer.deserialize_bytes(HashVisitor)
+        deserializer.deserialize_byte_buf(HashVisitor)
     }
 }
