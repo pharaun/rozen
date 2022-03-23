@@ -81,6 +81,16 @@ impl Backend for MemoryVFS {
             inner: Box::new(write_to)
         }))
     }
+
+    fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
+        let path = self.root
+            .join("data").expect("data-dir")
+            .join(&hash::to_hex(key)).expect("data-dir/key-file");
+
+        let write_to = path.create_file().map_err(|err| err.to_string())?;
+
+        Ok(Box::new(write_to))
+    }
 }
 
 impl MultiPart for MemoryWrite {

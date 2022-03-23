@@ -6,7 +6,8 @@ use time::format_description::well_known::Rfc3339;
 use crate::index::Index;
 use crate::crypto;
 use crate::backend::Backend;
-use crate::pack::PackIn;
+use crate::pack::PackBuilder;
+use crate::pack;
 use crate::hash;
 
 pub fn snapshot<B: Backend>(
@@ -17,13 +18,15 @@ pub fn snapshot<B: Backend>(
 ) {
     let index = Index::new();
 
-    // Trivial case to start with
-    let mut pack = PackIn::new();
+    // Trivial write pack
+    let pack_id = pack::generate_pack_id();
 
-    // Begin a multipart upload here
-    let mut multipart = backend.multi_write(
-        &pack.id,
+    // Write multipart upload
+    let multiwrite = backend.write_multi(
+        &pack_id,
     ).unwrap();
+
+    let mut wpack = PackBuilder::new(pack_id, multiwrite);
 
     {
         for entry in walker {
@@ -65,17 +68,10 @@ pub fn snapshot<B: Backend>(
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                 // Stream the data into the pack
-                                let mut chunk = pack.begin_write(&content_hash, &mut enc);
-
-                                // Spool the pack content to this point into multiwrite
-                                // TODO: fraught, the transition into chunk mode should carry the
-                                // buffer over from pack, and drain that first
-                                multipart.write(&mut pack).unwrap();
-                                multipart.write(&mut chunk).unwrap();
-
-                                // Finalize the chunk write
-                                pack.finish_write(chunk);
-                                multipart.write(&mut pack).unwrap();
+                                wpack.append(
+                                    content_hash.clone(),
+                                    &mut enc
+                                );
 
                                 // Load file info into index
                                 // Snapshot will be '<packfile-id>:<hash-id>' to pull out
@@ -83,7 +79,7 @@ pub fn snapshot<B: Backend>(
                                 //  list of <packfile-id> with <hash-id>s
                                 index.insert_file(
                                     e.path(),
-                                    Some(&pack.id),
+                                    Some(&wpack.id),
                                     &content_hash
                                 );
                             } else {
@@ -97,15 +93,7 @@ pub fn snapshot<B: Backend>(
         }
 
         // Finalize packfile and spool it into the backend
-        pack.finalize(&key);
-
-        multipart.write(
-            &mut pack,
-        ).unwrap();
-
-        // Complete the multipart upload
-        multipart.finalize().unwrap();
-
+        wpack.finalize(&key);
 
         // Spool the sqlite file into the backend as index
         // TODO: update this to support the archive file format defined in pack.rs

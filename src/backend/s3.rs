@@ -1,4 +1,4 @@
-use std::io::{Read, copy};
+use std::io::{Read, copy, Write};
 use std::mem;
 use std::error::Error;
 use tokio::runtime::Runtime;
@@ -130,6 +130,10 @@ impl Backend for S3 {
             part_id: 1,
             t_buf: Vec::new(),
         }))
+    }
+
+    fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
+        panic!("Not implemented yet");
     }
 }
 

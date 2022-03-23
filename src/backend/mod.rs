@@ -1,7 +1,7 @@
 pub mod mem;
 pub mod s3;
 
-use std::io::Read;
+use std::io::{Read, Write};
 
 use crate::hash;
 
@@ -18,6 +18,9 @@ pub trait Backend {
 
     // Multipart writes - This should begin a multipart
     fn multi_write(&self, key: &hash::Hash) -> Result<Box<dyn MultiPart>, String>;
+
+    // Write Multipart, give a write handle and it will handle the streaming
+    fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String>;
 }
 
 pub trait MultiPart {

@@ -100,7 +100,7 @@
 //! | [u8; 64]          | hmac   | Index HMAC </br> HMAC(index \|\| offset \|\| length) |
 //!
 
-use std::io::{copy, Read};
+use std::io::{copy, Read, Write};
 use std::convert::TryInto;
 use std::str::from_utf8;
 use serde::Serialize;
@@ -117,26 +117,8 @@ use crate::hash;
 // Selected via https://datatracker.ietf.org/doc/html/draft-main-magic-00
 const MAGIC: [u8; 8] = [0x65, 0x86, 0x89, 0xd8, 0x27, 0xb0, 0xbb, 0x9b];
 
-
-// Attempt to on the fly write chunks into a packfile to a backend
-pub struct PackIn {
-    pub id: hash::Hash,
-    idx: Vec<ChunkIdx>,
-
-    // TODO: Not sure how to hold state bits yet
-    t_buf: Option<Vec<u8>>,
-    finalized: bool,
-    p_idx: usize,
-}
-
-// TODO: Make sure we understand security/validation of the serialization deserialization of
-// various chunks here
-#[derive(Serialize, Deserialize, Debug)]
-struct ChunkIdx {
-    start_idx: usize,
-    length: usize,
-    hash: hash::Hash,
-}
+// 1Kb EDAT frame buffer
+const CHUNK_SIZE: usize = 1 * 1024;
 
 // TODO: Evaulate the need for a hash
 // Length, Type, Value, xxhash32 of Type+Value
@@ -159,208 +141,6 @@ fn ltvc(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
 
     buf
 }
-
-impl PackIn {
-    // Use a crypto grade random key for the packfile-id
-    pub fn new() -> Self {
-        // TODO: do this better - should be a typed pseudo hash instead of a fake hash
-        let id = crypto::gen_key();
-        let mut pack = PackIn {
-            id: hash::Hash::from(id.0),
-            idx: Vec::new(),
-            // Start with the magic bits for the file format, inspired by PNG
-            t_buf: None,
-            finalized: false,
-            p_idx: 0,
-        };
-        pack.write_buf(MAGIC.to_vec());
-        pack
-    }
-
-    fn write_buf(&mut self, data: Vec<u8>) {
-        self.p_idx += data.len();
-
-        println!("write_buf: {:?}", data.len());
-
-        match &mut self.t_buf {
-            None    => self.t_buf = Some(data),
-            Some(b) => b.extend(&data),
-        }
-    }
-
-    // TODO: should have integrity check to make sure the current reader is
-    // done (aka unset otherwise it errors)
-    pub fn begin_write<R: Read>(&mut self, hash: &hash::Hash, reader: R) -> ChunkState<R> {
-        if !self.finalized {
-            // Dump the FHDR chunk
-            self.write_buf(
-                ltvc(
-                    b"FHDR",
-                    hash.as_bytes()
-                )
-            );
-
-            // EDAT chunk size
-            let in_buf = [0u8; CHUNK_SIZE];
-            let out_buf = Vec::with_capacity(CHUNK_SIZE);
-
-            ChunkState {
-                hash: hash.clone(),
-                inner: reader,
-                len: 0,
-                idx: self.p_idx,
-                finished: false,
-                in_buf: Box::new(in_buf),
-                out_buf,
-            }
-        } else {
-            panic!("SYSTEM-ERROR, this is finalized and got more ChunkState");
-        }
-    }
-
-    pub fn finish_write<R: Read>(&mut self, chunk: ChunkState<R>) {
-        if !self.finalized {
-            self.idx.push(ChunkIdx {
-                start_idx: chunk.idx,
-                length: chunk.len,
-                hash: chunk.hash.clone(),
-            });
-            self.p_idx += chunk.len;
-        } else {
-            panic!("SYSTEM-ERROR, this is finalized and got more ChunkState");
-        }
-    }
-
-    // TODO: should hash+hmac various data bits in a packfile
-    // Store the hmac hash of the packfile in packfile + snapshot itself.
-    // TODO: should consume self, and return the final blob of data to read out then terminate
-    // for now we set finalized flag and refuse more blob additions
-    pub fn finalize(&mut self, key: &crypto::Key) {
-        if self.finalized {
-            panic!("SYSTEM-ERROR, already finalized once, this is invalid");
-        }
-
-        // Dump the FIDX chunk
-        let cached_p_idx = self.p_idx;
-        self.write_buf(
-            ltvc(b"FIDX", &[])
-        );
-
-        // Dump IDX into 1 large EDAT for now
-        // TODO: in real implementation it should chunk
-        let index = bincode::serialize(&self.idx).unwrap();
-
-        let comp = Encoder::new(
-            &index[..],
-            21
-        ).unwrap();
-
-        let mut enc = crypto::encrypt(&key, comp).unwrap();
-
-        let mut buf: Vec<u8> = Vec::new();
-        copy(&mut enc, &mut buf).unwrap();
-
-        self.write_buf(
-            ltvc(b"EDAT", &buf[..])
-        );
-
-        // Dump the REND chunk
-        self.write_buf(ltvc(b"REND", &(cached_p_idx as u32).to_le_bytes()));
-        self.finalized = true;
-    }
-}
-
-impl Read for PackIn {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if let Some(t_buf) = self.t_buf.as_mut() {
-            if t_buf.is_empty() {
-                self.t_buf = None;
-                Ok(0)
-            } else {
-                // Write out what we can
-                Ok(flush_buf(t_buf, buf))
-            }
-        } else {
-            if self.finalized {
-                println!("We are done for good on the PackIn, refuse more data");
-            }
-            Ok(0)
-        }
-    }
-}
-
-
-// 1Kb EDAT frame buffer
-const CHUNK_SIZE: usize = 1 * 1024;
-
-// TODO: if parent has any remaining data in buffer, put it here so that it
-// can finish reading out of the buffer before reading form the inner
-pub struct ChunkState<R: Read> {
-    hash: hash::Hash,
-    inner: R,
-    len: usize,
-    idx: usize,
-    finished: bool,
-
-    // TODO: can probs improve the effency of this and not double buffer or etc
-    in_buf: Box<[u8]>,
-    out_buf: Vec<u8>,
-}
-
-// Read from pack till EoF then time for next chunk to be added
-// TODO: to force ourself to handle sequence of EDAT for now use small
-// chunk size such as 1024
-impl<R: Read> Read for ChunkState<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut buf_write: usize = 0;
-
-        // 1. If buf_write == buf.len() return
-        while buf_write < buf.len() {
-            if !self.out_buf.is_empty() {
-                // 2. If data in out_buf, flush into buf first
-                buf_write += flush_buf(&mut self.out_buf, &mut buf[buf_write..]);
-
-            } else {
-                // 3. Read till there is 1Kb of data in in_buf
-                match fill_buf(&mut self.inner, &mut self.in_buf)? {
-                    // 4a. Nothing left in in_buf, is EoF, and is not finalize, finalize
-                    (true, 0) if !self.finished => {
-                        println!("Finalizing EDAT");
-                        self.finished = true;
-                    },
-
-                    // 4b. Nothing left in [in_buf, out_buf] and is EoF, exit
-                    (true, 0) if self.out_buf.is_empty() => {
-                        self.len += buf_write;
-                        return Ok(buf_write);
-                    },
-
-                    // 4c. Copy in_buf -> out_buf
-                    // 4d. Final read, finalize
-                    (_eof, in_len) => {
-                        self.out_buf = ltvc(b"EDAT", &mut self.in_buf[..in_len]);
-                        println!("dump2 - out: {:?}, in: {:?}", self.out_buf.len(), self.in_buf.len());
-                    },
-                }
-            }
-        }
-
-        self.len += buf_write;
-        Ok(buf_write)
-    }
-}
-
-
-
-// TODO: have 2 ways to read the packfile, one via the index, in a seek manner, other via start to
-// end
-// Attempt to read a packfile from the backend in a streaming manner
-// TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
-pub struct PackOut {
-    idx: Vec<ChunkIdx>,
-    buf: Vec<u8>,
-}
-
 
 // Read the buffer to convert to a LTVC and validate
 // TODO: consider a iterator/streaming option where it takes a buffer
@@ -392,6 +172,120 @@ fn read_ltvc(buf: &[u8]) -> Option<(usize, [u8; 4], &[u8])> {
     }
 }
 
+
+// TODO: do this better - should be a typed pseudo hash instead of a fake hash
+pub fn generate_pack_id() -> hash::Hash {
+    // Use a crypto grade random key for the packfile-id
+    let id = crypto::gen_key();
+    hash::Hash::from(id.0)
+}
+
+// Packfile builder
+pub struct PackBuilder<W: Write> {
+    pub id: hash::Hash,
+    idx: Vec<ChunkIdx>,
+    inner: W,
+
+    // State bits
+    p_idx: usize,
+}
+
+// TODO: Make sure we understand security/validation of the serialization deserialization of
+// various chunks here
+#[derive(Serialize, Deserialize, Debug)]
+struct ChunkIdx {
+    start_idx: usize,
+    length: usize,
+    hash: hash::Hash,
+}
+
+impl<W: Write> PackBuilder<W> {
+    pub fn new(id: hash::Hash, writer: W) -> Self {
+        let mut pack = PackBuilder {
+            id,
+            idx: Vec::new(),
+            inner: writer,
+            p_idx: 0
+        };
+
+        // Start with the magic bits for the file format, inspired by PNG
+        pack.write(&MAGIC);
+        pack
+    }
+
+    fn write(&mut self, data: &[u8]) {
+        self.p_idx += data.len();
+        self.inner.write(data);
+    }
+
+    // Read from pack till EoF then time for next chunk to be added
+    // TODO: to force ourself to handle sequence of EDAT for now use small
+    // chunk size such as 1024
+    pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) {
+        // Dump the FHDR chunk first
+        self.write(&ltvc(b"FHDR", hash.as_bytes()));
+
+        // EDAT chunk size
+        let mut in_buf = [0u8; CHUNK_SIZE];
+        let chunk_idx = self.p_idx;
+        let mut chunk_size = 0;
+
+        loop {
+            let (eof, len) = fill_buf(reader, &mut in_buf).unwrap();
+            chunk_size += len;
+            self.write(&ltvc(b"EDAT", &in_buf[..len]));
+
+            if eof {
+                break;
+            }
+        }
+
+        self.idx.push(ChunkIdx {
+            start_idx: chunk_idx,
+            length: chunk_size,
+            hash: hash,
+        });
+    }
+
+    // TODO: should hash+hmac various data bits in a packfile
+    // Store the hmac hash of the packfile in packfile + snapshot itself.
+    pub fn finalize(mut self, key: &crypto::Key) {
+        let f_idx = self.p_idx;
+        self.write(&ltvc(b"FIDX", &[]));
+
+        // Dump IDX into 1 large EDAT for now
+        // TODO: in real implementation it should chunk
+        let index = bincode::serialize(&self.idx).unwrap();
+
+        let comp = Encoder::new(
+            &index[..],
+            21
+        ).unwrap();
+
+        let mut enc = crypto::encrypt(&key, comp).unwrap();
+
+        let mut buf: Vec<u8> = Vec::new();
+        copy(&mut enc, &mut buf).unwrap();
+
+        self.write(&ltvc(b"EDAT", &buf[..]));
+
+        // Dump the REND chunk
+        self.write(&ltvc(b"REND", &(f_idx as u32).to_le_bytes()));
+
+        // Flush to signal to the backend that its done
+        self.inner.flush();
+    }
+}
+
+
+// TODO: have 2 ways to read the packfile, one via the index, in a seek manner, other via start to
+// end
+// Attempt to read a packfile from the backend in a streaming manner
+// TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
+pub struct PackOut {
+    idx: Vec<ChunkIdx>,
+    buf: Vec<u8>,
+}
 
 impl PackOut {
     pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
