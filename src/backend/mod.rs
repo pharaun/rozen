@@ -16,14 +16,7 @@ pub trait Backend {
     fn write<R: Read>(&self, key: &hash::Hash, reader: R) -> Result<(), String>;
     fn read(&mut self, key: &hash::Hash) -> Result<Box<dyn Read>, String>;
 
-    // Multipart writes - This should begin a multipart
-    fn multi_write(&self, key: &hash::Hash) -> Result<Box<dyn MultiPart>, String>;
-
     // Write Multipart, give a write handle and it will handle the streaming
+    // TODO: consider if finalize on a trait is better than 'flush' for our purposes
     fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String>;
-}
-
-pub trait MultiPart {
-    fn write(&mut self, reader: &mut dyn Read) -> Result<(), String>;
-    fn finalize(self: Box<Self>) -> Result<(), String>;
 }

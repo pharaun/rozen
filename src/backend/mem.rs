@@ -2,15 +2,10 @@ use std::io::{Read, Write, copy};
 use vfs::{VfsPath, MemoryFS};
 
 use crate::backend::Backend;
-use crate::backend::MultiPart;
 use crate::hash;
 
 pub struct MemoryVFS {
     root: VfsPath
-}
-
-pub struct MemoryWrite {
-    inner: Box<dyn Write>
 }
 
 impl MemoryVFS {
@@ -70,18 +65,6 @@ impl Backend for MemoryVFS {
         )
     }
 
-    fn multi_write(&self, key: &hash::Hash) -> Result<Box<dyn MultiPart>, String> {
-        let path = self.root
-            .join("data").expect("data-dir")
-            .join(&hash::to_hex(key)).expect("data-dir/key-file");
-
-        let write_to = path.create_file().map_err(|err| err.to_string())?;
-
-        Ok(Box::new(MemoryWrite {
-            inner: Box::new(write_to)
-        }))
-    }
-
     fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
         let path = self.root
             .join("data").expect("data-dir")
@@ -90,17 +73,6 @@ impl Backend for MemoryVFS {
         let write_to = path.create_file().map_err(|err| err.to_string())?;
 
         Ok(Box::new(write_to))
-    }
-}
-
-impl MultiPart for MemoryWrite {
-    fn write(&mut self, reader: &mut dyn Read) -> Result<(), String> {
-        copy(reader, &mut self.inner).unwrap();
-        Ok(())
-    }
-
-    fn finalize(self: Box<Self>) -> Result<(), String> {
-        Ok(())
     }
 }
 

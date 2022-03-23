@@ -14,7 +14,6 @@ use http::Uri;
 use std::rc::Rc;
 
 use crate::backend::Backend;
-use crate::backend::MultiPart;
 use crate::buf::flush_buf;
 use crate::hash;
 
@@ -113,25 +112,6 @@ impl Backend for S3 {
         )
     }
 
-    fn multi_write(&self, key: &hash::Hash) -> Result<Box<dyn MultiPart>, String> {
-        let call = self.client.create_multipart_upload().
-            bucket("test").
-            key(&hash::to_hex(key)).
-            send();
-
-        let res = self.rt.block_on(async {call.await}).unwrap();
-
-        Ok(Box::new(S3Multi {
-            client: self.client.clone(),
-            rt: self.rt.clone(),
-            key: key.clone(),
-            id: res.upload_id.unwrap(),
-            part: Vec::new(),
-            part_id: 1,
-            t_buf: Vec::new(),
-        }))
-    }
-
     fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
         let call = self.client.create_multipart_upload().
             bucket("test").
@@ -198,9 +178,6 @@ impl Write for S3Multi {
     }
 }
 
-
-
-
 impl S3Multi {
     fn upload_part(&mut self, last: bool) {
         println!("S3-multi-write: last: {:?}", last);
@@ -237,40 +214,6 @@ impl S3Multi {
         }
     }
 }
-
-impl MultiPart for S3Multi {
-    fn write(&mut self, reader: &mut dyn Read) -> Result<(), String> {
-        let mut buf = Vec::new();
-        copy(reader, &mut buf).unwrap();
-
-        println!("S3-multi-write: {:?}", buf.len());
-        println!("S3-multi-write: t_buf: {:?}", self.t_buf.len());
-
-        // append to t_buf
-        self.t_buf.extend(buf);
-        self.upload_part(false);
-
-        Ok(())
-    }
-
-    fn finalize(mut self: Box<Self>) -> Result<(), String> {
-        self.upload_part(true);
-
-        let call = self.client.complete_multipart_upload().
-            bucket("test").
-            key(hash::to_hex(&self.key)).
-            upload_id(self.id.clone()).
-            multipart_upload(
-                CompletedMultipartUpload::builder().
-                    set_parts(Some(self.part)).
-                    build()
-            ).send();
-
-        let _res = self.rt.block_on(async {call.await}).unwrap();
-        Ok(())
-    }
-}
-
 
 // TODO: properly implement streaming
 struct S3Read {

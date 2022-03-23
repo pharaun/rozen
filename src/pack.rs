@@ -102,7 +102,6 @@
 
 use std::io::{copy, Read, Write};
 use std::convert::TryInto;
-use std::str::from_utf8;
 use serde::Serialize;
 use serde::Deserialize;
 use bincode;
@@ -110,7 +109,6 @@ use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
 
 use crate::crypto;
-use crate::buf::flush_buf;
 use crate::buf::fill_buf;
 use crate::hash;
 
@@ -206,13 +204,13 @@ impl<W: Write> PackBuilder<W> {
         };
 
         // Start with the magic bits for the file format, inspired by PNG
-        pack.write(&MAGIC);
+        pack.write(&MAGIC).unwrap();
         pack
     }
 
-    fn write(&mut self, data: &[u8]) {
+    fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
         self.p_idx += data.len();
-        self.inner.write(data);
+        self.inner.write(data)
     }
 
     // Read from pack till EoF then time for next chunk to be added
@@ -220,7 +218,7 @@ impl<W: Write> PackBuilder<W> {
     // chunk size such as 1024
     pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) {
         // Dump the FHDR chunk first
-        self.write(&ltvc(b"FHDR", hash.as_bytes()));
+        self.write(&ltvc(b"FHDR", hash.as_bytes())).unwrap();
 
         // EDAT chunk size
         let mut in_buf = [0u8; CHUNK_SIZE];
@@ -228,7 +226,7 @@ impl<W: Write> PackBuilder<W> {
 
         loop {
             let (eof, len) = fill_buf(reader, &mut in_buf).unwrap();
-            self.write(&ltvc(b"EDAT", &in_buf[..len]));
+            self.write(&ltvc(b"EDAT", &in_buf[..len])).unwrap();
 
             if eof {
                 break;
@@ -246,7 +244,7 @@ impl<W: Write> PackBuilder<W> {
     // Store the hmac hash of the packfile in packfile + snapshot itself.
     pub fn finalize(mut self, key: &crypto::Key) {
         let f_idx = self.p_idx;
-        self.write(&ltvc(b"FIDX", &[]));
+        self.write(&ltvc(b"FIDX", &[])).unwrap();
 
         // Dump IDX into 1 large EDAT for now
         // TODO: in real implementation it should chunk
@@ -262,13 +260,13 @@ impl<W: Write> PackBuilder<W> {
         let mut buf: Vec<u8> = Vec::new();
         copy(&mut enc, &mut buf).unwrap();
 
-        self.write(&ltvc(b"EDAT", &buf[..]));
+        self.write(&ltvc(b"EDAT", &buf[..])).unwrap();
 
         // Dump the REND chunk
-        self.write(&ltvc(b"REND", &(f_idx as u32).to_le_bytes()));
+        self.write(&ltvc(b"REND", &(f_idx as u32).to_le_bytes())).unwrap();
 
         // Flush to signal to the backend that its done
-        self.inner.flush();
+        self.inner.flush().unwrap();
     }
 }
 
