@@ -225,11 +225,9 @@ impl<W: Write> PackBuilder<W> {
         // EDAT chunk size
         let mut in_buf = [0u8; CHUNK_SIZE];
         let chunk_idx = self.p_idx;
-        let mut chunk_size = 0;
 
         loop {
             let (eof, len) = fill_buf(reader, &mut in_buf).unwrap();
-            chunk_size += len;
             self.write(&ltvc(b"EDAT", &in_buf[..len]));
 
             if eof {
@@ -239,7 +237,7 @@ impl<W: Write> PackBuilder<W> {
 
         self.idx.push(ChunkIdx {
             start_idx: chunk_idx,
-            length: chunk_size,
+            length: self.p_idx - chunk_idx,
             hash: hash,
         });
     }
