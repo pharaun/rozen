@@ -133,7 +133,22 @@ impl Backend for S3 {
     }
 
     fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
-        panic!("Not implemented yet");
+        let call = self.client.create_multipart_upload().
+            bucket("test").
+            key(&hash::to_hex(key)).
+            send();
+
+        let res = self.rt.block_on(async {call.await}).unwrap();
+
+        Ok(Box::new(S3Multi {
+            client: self.client.clone(),
+            rt: self.rt.clone(),
+            key: key.clone(),
+            id: res.upload_id.unwrap(),
+            part: Vec::new(),
+            part_id: 1,
+            t_buf: Vec::new(),
+        }))
     }
 }
 
@@ -150,6 +165,41 @@ struct S3Multi {
 }
 
 const BUFFER_TARGET: usize = 6 * 1024 * 1024;
+
+impl Write for S3Multi {
+    fn write(&mut self, in_buf: &[u8]) -> Result<usize, std::io::Error> {
+        println!("S3-multi-write: i_buf: {:?}", in_buf.len());
+        println!("S3-multi-write: t_buf: {:?}", self.t_buf.len());
+
+        // append to t_buf
+        self.t_buf.extend(in_buf);
+        self.upload_part(false);
+
+        Ok(in_buf.len())
+    }
+
+    // TODO: not sure if this is proper use of flush or if we should have a finalize call instead
+    fn flush(&mut self) -> Result<(), std::io::Error> {
+        // Finalaize the stream
+        self.upload_part(true);
+
+        let call = self.client.complete_multipart_upload().
+            bucket("test").
+            key(hash::to_hex(&self.key)).
+            upload_id(self.id.clone()).
+            multipart_upload(
+                CompletedMultipartUpload::builder().
+                    set_parts(Some(self.part.clone())).
+                    build()
+            ).send();
+
+        let _res = self.rt.block_on(async {call.await}).unwrap();
+        Ok(())
+    }
+}
+
+
+
 
 impl S3Multi {
     fn upload_part(&mut self, last: bool) {
