@@ -135,10 +135,6 @@ fn ltvc(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
     buf.extend_from_slice(data);
     buf.extend_from_slice(&hash.finalize().to_le_bytes());
 
-    if let Ok(out_str) = from_utf8(chunk_type) {
-        println!("Serializing: {:?}", out_str);
-    }
-
     buf
 }
 
@@ -199,6 +195,7 @@ struct ChunkIdx {
     hash: hash::Hash,
 }
 
+// TODO: implement drop to call finalize
 impl<W: Write> PackBuilder<W> {
     pub fn new(id: hash::Hash, writer: W) -> Self {
         let mut pack = PackBuilder {
@@ -292,13 +289,13 @@ impl PackOut {
         let mut buf: Vec<u8> = Vec::new();
         copy(reader, &mut buf).unwrap();
 
-        println!("Buf.len: {:?}", buf.len());
+        println!("\t\t\tBuf.len: {:?}", buf.len());
 
         // Current REND is 16 bytes
         // TODO: make this more intelligent
         let (_, typ, rend_dat) = read_ltvc(&buf[buf.len()-16..buf.len()]).unwrap();
         if &typ == b"REND" {
-            println!("REND parsing");
+            println!("\t\t\tREND parsing");
         }
 
         let i_idx = {
@@ -306,19 +303,19 @@ impl PackOut {
             u32::from_le_bytes(idx_buf) as usize
         };
 
-        println!("Index offset: {:?}", i_idx);
-        println!("buf-len: {:?}", buf.len());
+        println!("\t\t\tIndex offset: {:?}", i_idx);
+        println!("\t\t\tbuf-len: {:?}", buf.len());
 
         // FIDX is 12 bytes, ingest that
         let (_, typ, _) = read_ltvc(&buf[i_idx..(i_idx+12)]).unwrap();
         if &typ == b"FIDX" {
-            println!("FIDX parsing");
+            println!("\t\t\tFIDX parsing");
         }
 
         // Fetch the EDAT
         let (_, typ, edat) = read_ltvc(&buf[(i_idx+12)..]).unwrap();
         if &typ == b"EDAT" {
-            println!("EDAT parsing");
+            println!("\t\t\tEDAT parsing");
         }
         let mut dec = crypto::decrypt(&key, edat).unwrap();
         let mut und = Decoder::new(&mut dec).unwrap();
@@ -329,8 +326,7 @@ impl PackOut {
         // Deserialize the index
         let chunk_idx: Vec<ChunkIdx> = bincode::deserialize(&idx_buf).unwrap();
 
-        println!("Chunk len: {:?}", chunk_idx.len());
-        println!("Chunk Idx: {:#?}", chunk_idx);
+        println!("\t\t\tChunk len: {:?}", chunk_idx.len());
 
         PackOut {
             idx: chunk_idx,
@@ -344,12 +340,12 @@ impl PackOut {
                 let mut buf: Vec<u8> = Vec::new();
                 buf.extend_from_slice(&self.buf[c.start_idx..(c.start_idx+c.length)]);
 
-                println!("Found!");
-                println!("\tCached idx: {:?}, length: {:?}", c.start_idx, c.length);
-                println!("\tActual idx: {:?}, End idx: {:?}", c.start_idx, (c.start_idx+c.length));
-                println!("\tbuf: {:?}", buf.len());
+                println!("\t\tFound! for {:?}", hash::to_hex(&hash));
+                println!("\t\t\tCached idx: {:?}, length: {:?}", c.start_idx, c.length);
+                println!("\t\t\tActual idx: {:?}, End idx: {:?}", c.start_idx, (c.start_idx+c.length));
+                println!("\t\t\tbuf: {:?}", buf.len());
 
-                println!("\tunpack EDAT");
+                println!("\t\t\tunpack EDAT");
                 let mut out_buf: Vec<u8> = Vec::new();
                 let mut out_idx: usize = 0;
 
@@ -359,7 +355,7 @@ impl PackOut {
                     out_buf.extend(edat_dat);
 
                     println!(
-                        "\tEDAT read: rlen: {:?}, left: {:?}, total: {:?}, cur_out_len: {:?}",
+                        "\t\t\tEDAT read: rlen: {:?}, left: {:?}, total: {:?}, cur_out_len: {:?}",
                         read_len, buf.len()-out_idx, buf.len(), out_buf.len());
                 }
 

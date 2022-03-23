@@ -108,12 +108,10 @@ fn main() {
         let pack = pack.unwrap();
         println!("HASH: {:?}", hash);
         println!("\tPACK: {:?}", pack);
-        println!("\tPERM: {:?}", perm);
-        println!("\tPATH: {:?}", path);
 
         // Find or load the packfile
         if !pack_cache.contains_key(&pack) {
-            println!("Loading: {:?}", pack);
+            println!("\t\tLoading: {:?}", pack);
 
             let mut pack_read = Backend::read(&mut backend, &hash::from_hex(&pack).unwrap()).unwrap();
             let pack_file = pack::PackOut::load(&mut pack_read, &key);
@@ -132,16 +130,17 @@ fn main() {
         let mut und = Decoder::new(&mut dec).unwrap();
         let content_hash = hash::hash(&key, &mut und).unwrap();
 
+        println!("\tPATH: {:?}", path);
+        println!("\tPERM: {:?}", perm);
+
         match hash::from_hex(hash.clone()) {
             Ok(data_hash) => {
                 let is_same = data_hash == content_hash;
 
                 println!("\tSAME: {:5}", is_same);
-                println!("\tSIZE: {:5}", "-----");
             },
             Err(_) => {
                 println!("\tSAME: {:5}", "-----");
-                println!("\tSIZE: {:5}", "-----");
             },
         }
     });
