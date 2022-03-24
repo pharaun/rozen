@@ -10,6 +10,16 @@ use crate::pack::PackBuilder;
 use crate::pack;
 use crate::hash;
 
+// TODO: can probs make the snapshot be strictly focused on snapshot concerns such as
+// - deciding what files needs to be stored in a snapshot
+// - deciding what file to skip/move/etc
+// - once it has decided that a file or block of data needs to go into a packfile it can then
+//      submit it to a queue that then get processed/packed up for shipping to the backend.
+// - Open question: what about backups that does delta/diff and chunking and all of that, would
+//      be instead submitting data/blocks. but could still see this section being only concerned
+//      with what data should be backed up
+//      then the queue can then manage "whole" or "chunked" or "chunked+delta" for processing
+//      before it ships it into the packfile possibly
 pub fn snapshot<B: Backend>(
     key: &crypto::Key,
     backend: &mut B,

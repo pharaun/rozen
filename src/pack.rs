@@ -124,7 +124,6 @@ pub fn generate_pack_id() -> hash::Hash {
     hash::Hash::from(id.0)
 }
 
-// Packfile builder
 pub struct PackBuilder<W: Write> {
     pub id: hash::Hash,
     idx: Vec<ChunkIdx>,
@@ -134,8 +133,6 @@ pub struct PackBuilder<W: Write> {
     p_idx: usize,
 }
 
-// TODO: Make sure we understand security/validation of the serialization deserialization of
-// various chunks here
 #[derive(Serialize, Deserialize, Debug)]
 struct ChunkIdx {
     start_idx: usize,
@@ -158,15 +155,10 @@ impl<W: Write> PackBuilder<W> {
         pack
     }
 
-    // Read from pack till EoF then time for next chunk to be added
-    // TODO: to force ourself to handle sequence of EDAT for now use small
-    // chunk size such as 1024
     pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) {
         let f_idx = self.p_idx;
-        // Dump the FHDR chunk first
-        self.p_idx += self.inner.write_fhdr(&hash).unwrap();
 
-        // Write EDAT
+        self.p_idx += self.inner.write_fhdr(&hash).unwrap();
         self.p_idx += self.inner.write_edat(reader).unwrap();
 
         self.idx.push(ChunkIdx {
@@ -180,22 +172,17 @@ impl<W: Write> PackBuilder<W> {
     // Store the hmac hash of the packfile in packfile + snapshot itself.
     pub fn finalize(mut self, key: &crypto::Key) {
         let f_idx = self.p_idx;
+
         self.p_idx += self.inner.write_fidx().unwrap();
 
-        // Dump IDX into 1 large EDAT for now
-        // TODO: in real implementation it should chunk
         let index = bincode::serialize(&self.idx).unwrap();
-
         let comp = Encoder::new(
             &index[..],
             21
         ).unwrap();
-
         let mut enc = crypto::encrypt(&key, comp).unwrap();
 
         self.p_idx += self.inner.write_edat(&mut enc).unwrap();
-
-        // Dump the AEND chunk
         self.p_idx += self.inner.write_aend(f_idx).unwrap();
 
         // Flush to signal to the backend that its done
@@ -208,6 +195,8 @@ impl<W: Write> PackBuilder<W> {
 // end
 // Attempt to read a packfile from the backend in a streaming manner
 // TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
+// TODO: for now have this PackOut be a streaming validating pack reader, it stream reads
+// and then cache the idx+data then use that info to validate the fidx and aend
 pub struct PackOut {
     idx: Vec<ChunkIdx>,
     buf: Vec<u8>,

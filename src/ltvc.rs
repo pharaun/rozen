@@ -5,6 +5,8 @@ use crate::hash::Hash;
 use crate::buf::fill_buf;
 
 // 1Kb EDAT frame buffer
+// TODO: to force ourself to handle sequence of EDAT for now use small
+// chunk size such as 1024
 const CHUNK_SIZE: usize = 1 * 1024;
 
 pub struct LtvcBuilder<W: Write> {
@@ -48,6 +50,9 @@ impl<W: Write> LtvcBuilder<W> {
         self.write(b"FHDR", hash.as_bytes())
     }
 
+    // TODO: may be worth moving compression/encryption? to ensure that only
+    // compressed+encrypted data arrives here, but also the management of those
+    // might be better else where cos there might be multi-threading concerns
     pub fn write_edat<R: Read>(&mut self, reader: &mut R) -> Result<usize, Error> {
         let mut r_len = 0;
         let mut in_buf = [0u8; CHUNK_SIZE];
@@ -72,10 +77,21 @@ impl<W: Write> LtvcBuilder<W> {
     }
 }
 
-// Read the buffer to convert to a LTVC and validate
-// TODO: consider a iterator/streaming option where it takes a buffer
-// that begins on a chunk and then it streams the chunk+data one block at a time
+
 // TODO: make sure to reject too large chunk size for preventing out of memory bugs
+pub struct LtvcReader<R: Read> {
+    inner: R,
+}
+
+impl<R: Read> LtvcReader<R> {
+    pub fn new(reader: R) -> Self {
+        LtvcReader {
+            inner: reader,
+        }
+    }
+}
+
+
 pub fn read_ltvc(buf: &[u8]) -> Option<(usize, [u8; 4], &[u8])> {
     let len_buf: [u8; 4] = buf[0..4].try_into().unwrap();
     let typ_buf: [u8; 4] = buf[4..8].try_into().unwrap();
