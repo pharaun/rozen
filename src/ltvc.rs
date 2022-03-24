@@ -1,24 +1,75 @@
+use std::io::{Error, Read, Write};
+
 use crate::hash::Checksum;
+use crate::hash::Hash;
+use crate::buf::fill_buf;
 
 // 1Kb EDAT frame buffer
-pub const CHUNK_SIZE: usize = 1 * 1024;
+const CHUNK_SIZE: usize = 1 * 1024;
 
-// TODO: Evaulate the need for a hash
-// Length, Type, Value, xxhash32 of Type+Value
-// u32, u32, [u8; N], u32
-pub fn ltvc(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
-    let mut hash = Checksum::new();
-    hash.update(chunk_type);
-    hash.update(data);
+pub struct LtvcBuilder<W: Write> {
+    inner: W,
+}
 
-    let mut buf: Vec<u8> = Vec::new();
+// This is the high level writer interface
+impl<W: Write> LtvcBuilder<W> {
+    pub fn new(writer: W) -> Self {
+        LtvcBuilder {
+            inner: writer,
+        }
+    }
 
-    buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    buf.extend_from_slice(chunk_type);
-    buf.extend_from_slice(data);
-    buf.extend_from_slice(&hash.finalize().to_le_bytes());
+    pub fn to_inner(self) -> W {
+        self.inner
+    }
 
-    buf
+    // TODO: Evaulate the need for a hash
+    // Length, Type, Value, xxhash32 of Type+Value
+    // u32, u32, [u8; N], u32
+    fn write(&mut self, chunk_type: &[u8; 4], data: &[u8]) -> Result<usize, Error> {
+        let mut hash = Checksum::new();
+        hash.update(chunk_type);
+        hash.update(data);
+
+        let mut len = 0;
+        len += self.inner.write(&(data.len() as u32).to_le_bytes())?;
+        len += self.inner.write(chunk_type)?;
+        len += self.inner.write(data)?;
+        len += self.inner.write(&hash.finalize().to_le_bytes())?;
+
+        Ok(len)
+    }
+
+    pub fn write_ahdr(&mut self, version: u8) -> Result<usize, Error> {
+        self.write(b"AHDR", &[version])
+    }
+
+    pub fn write_fhdr(&mut self, hash: &Hash) -> Result<usize, Error> {
+        self.write(b"FHDR", hash.as_bytes())
+    }
+
+    pub fn write_edat<R: Read>(&mut self, reader: &mut R) -> Result<usize, Error> {
+        let mut r_len = 0;
+        let mut in_buf = [0u8; CHUNK_SIZE];
+
+        loop {
+            let (eof, len) = fill_buf(reader, &mut in_buf)?;
+            r_len += self.write(b"EDAT", &in_buf[..len])?;
+
+            if eof {
+                break;
+            }
+        }
+        Ok(r_len)
+    }
+
+    pub fn write_fidx(&mut self) -> Result<usize, Error> {
+        self.write(b"FIDX", &[])
+    }
+
+    pub fn write_aend(&mut self, f_idx: usize) -> Result<usize, Error> {
+        self.write(b"AEND", &(f_idx as u32).to_le_bytes())
+    }
 }
 
 // Read the buffer to convert to a LTVC and validate

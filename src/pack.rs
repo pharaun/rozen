@@ -113,9 +113,8 @@ use zstd::stream::read::Encoder;
 use zstd::stream::read::Decoder;
 
 use crate::crypto;
-use crate::buf::fill_buf;
 use crate::hash;
-use crate::ltvc::{ltvc, read_ltvc, CHUNK_SIZE};
+use crate::ltvc::{LtvcBuilder, read_ltvc};
 
 
 // TODO: do this better - should be a typed pseudo hash instead of a fake hash
@@ -129,7 +128,7 @@ pub fn generate_pack_id() -> hash::Hash {
 pub struct PackBuilder<W: Write> {
     pub id: hash::Hash,
     idx: Vec<ChunkIdx>,
-    inner: W,
+    inner: LtvcBuilder<W>,
 
     // State bits
     p_idx: usize,
@@ -150,43 +149,29 @@ impl<W: Write> PackBuilder<W> {
         let mut pack = PackBuilder {
             id,
             idx: Vec::new(),
-            inner: writer,
+            inner: LtvcBuilder::new(writer),
             p_idx: 0
         };
 
         // Start with the Archive Header (kinda serves as a magic bits)
-        pack.write(&ltvc(b"AHDR", &[0x01])).unwrap();
+        pack.p_idx += pack.inner.write_ahdr(0x01).unwrap();
         pack
-    }
-
-    fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
-        self.p_idx += data.len();
-        self.inner.write(data)
     }
 
     // Read from pack till EoF then time for next chunk to be added
     // TODO: to force ourself to handle sequence of EDAT for now use small
     // chunk size such as 1024
     pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) {
+        let f_idx = self.p_idx;
         // Dump the FHDR chunk first
-        self.write(&ltvc(b"FHDR", hash.as_bytes())).unwrap();
+        self.p_idx += self.inner.write_fhdr(&hash).unwrap();
 
-        // EDAT chunk size
-        let mut in_buf = [0u8; CHUNK_SIZE];
-        let chunk_idx = self.p_idx;
-
-        loop {
-            let (eof, len) = fill_buf(reader, &mut in_buf).unwrap();
-            self.write(&ltvc(b"EDAT", &in_buf[..len])).unwrap();
-
-            if eof {
-                break;
-            }
-        }
+        // Write EDAT
+        self.p_idx += self.inner.write_edat(reader).unwrap();
 
         self.idx.push(ChunkIdx {
-            start_idx: chunk_idx,
-            length: self.p_idx - chunk_idx,
+            start_idx: f_idx,
+            length: self.p_idx - f_idx,
             hash: hash,
         });
     }
@@ -195,7 +180,7 @@ impl<W: Write> PackBuilder<W> {
     // Store the hmac hash of the packfile in packfile + snapshot itself.
     pub fn finalize(mut self, key: &crypto::Key) {
         let f_idx = self.p_idx;
-        self.write(&ltvc(b"FIDX", &[])).unwrap();
+        self.p_idx += self.inner.write_fidx().unwrap();
 
         // Dump IDX into 1 large EDAT for now
         // TODO: in real implementation it should chunk
@@ -208,16 +193,13 @@ impl<W: Write> PackBuilder<W> {
 
         let mut enc = crypto::encrypt(&key, comp).unwrap();
 
-        let mut buf: Vec<u8> = Vec::new();
-        copy(&mut enc, &mut buf).unwrap();
-
-        self.write(&ltvc(b"EDAT", &buf[..])).unwrap();
+        self.p_idx += self.inner.write_edat(&mut enc).unwrap();
 
         // Dump the AEND chunk
-        self.write(&ltvc(b"AEND", &(f_idx as u32).to_le_bytes())).unwrap();
+        self.p_idx += self.inner.write_aend(f_idx).unwrap();
 
         // Flush to signal to the backend that its done
-        self.inner.flush().unwrap();
+        self.inner.to_inner().flush().unwrap();
     }
 }
 
@@ -297,9 +279,14 @@ impl PackOut {
                 let mut out_idx: usize = 0;
 
                 while out_idx != buf.len() {
-                    let (read_len, _typ, edat_dat) = read_ltvc(&buf[out_idx..]).unwrap();
+                    let (read_len, typ, edat_dat) = read_ltvc(&buf[out_idx..]).unwrap();
                     out_idx += read_len;
-                    out_buf.extend(edat_dat);
+
+                    if &typ == b"FHDR" {
+                        println!("\t\t\tSkipping FHDR");
+                    } else {
+                        out_buf.extend(edat_dat);
+                    }
 
                     println!(
                         "\t\t\tEDAT read: rlen: {:?}, left: {:?}, total: {:?}, cur_out_len: {:?}",
