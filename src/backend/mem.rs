@@ -90,10 +90,10 @@ mod tests {
 
         let data: &[u8; 9] = b"Test Data";
         let b = Cursor::new(data);
-        back.write(key, b).unwrap();
+        back.write_filename(key, b).unwrap();
 
         let mut val = String::new();
-        back.read(key).unwrap()
+        back.read_filename(key).unwrap()
             .read_to_string(&mut val).unwrap();
 
         assert_eq!(val, "Test Data");
@@ -106,14 +106,14 @@ mod tests {
 
         let data: &[u8; 9] = b"Test Data";
         let b = Cursor::new(data);
-        back.write(key, b).unwrap();
+        back.write_filename(key, b).unwrap();
 
         let data: &[u8; 9] = b"Data Test";
         let b = Cursor::new(data);
-        back.write(key, b).unwrap();
+        back.write_filename(key, b).unwrap();
 
         let mut val = String::new();
-        back.read(key).unwrap()
+        back.read_filename(key).unwrap()
             .read_to_string(&mut val).unwrap();
 
         assert_eq!(val, "Data Test");
