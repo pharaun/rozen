@@ -15,6 +15,7 @@ mod index;
 mod pack;
 mod buf;
 mod hash;
+mod ltvc;
 use crate::index::Index;
 
 // Configuration
