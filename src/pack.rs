@@ -37,8 +37,8 @@
 //!     the encrypted data matches the phash
 //!
 //! File format family:
-//!     - Packfile: magic, FHDR, EDAT, FHDR, EDAT, fIDX, EDAT, trailer (-> fIDX)
-//!     - Singlet: magic, FHDR, EDAT, trailer (-> 0x0000)
+//!     - Packfile: AHDR, FHDR, EDAT, FHDR, EDAT, fIDX, EDAT, AEND (-> fIDX)
+//!     - Singlet: AHDR, FHDR, EDAT, AEND (-> 0x0000)
 //!     - Snapshot: Same as Singlet
 //!
 //!     Layers:
@@ -49,6 +49,10 @@
 //!         FILE -> compression -> crypto -> EDAT
 //!
 //!     mvp-chunk:
+//!         AHDR
+//!             - Section header
+//!             - Version 1 so a magic byte would be
+//!             - 00 00 00 01 b'S' b'H' b'D' b'R' 01 [checksum]
 //!         FHDR
 //!             - File data (1 followed by 1 more more EDAT)
 //!             - phash => keyed hmac of plaintext data
@@ -66,19 +70,19 @@
 //!                 * May end up having fHDR/fIDX/fSNP being marker chunks to mark what
 //!                 the following sequence of EDAT are for
 //!             - EDAT that contains the sqlite db that holds the relevant snapshot+metadata
-//!         REND
-//!             - Rozen file end (only there to terminate a sequence of EDAT)
+//!         AEND
+//!             - Archive sector file end (only there to terminate a sequence of EDAT)
 //!             - Contains the trailer-pointer (without chunk checksum)
-//!             - 4, REND, ptr
+//!             - 4, AEND, ptr
 //!             - trailer-pointer
 //!                 * points to fIDX
 //!                 * None
 //!                     - Fetch 16 bytes at end of file
-//!                     - If last 4 bytes == REND, there is no trailer pointer
-//!                         * What if it is 4, REND, REND (for pointer) so better validate
-//!                         * last 8 byte is 0, REND, if there is REND, REND then its a pointer to
-//!                             REND bytes
-//!                     - Otherwise validate that first 8 bytes is 4 + REND before using pointer
+//!                     - If last 4 bytes == AEND, there is no trailer pointer
+//!                         * What if it is 4, AEND, AEND (for pointer) so better validate
+//!                         * last 8 byte is 0, AEND, if there is AEND, AEND then its a pointer to
+//!                             AEND bytes
+//!                     - Otherwise validate that first 8 bytes is 4 + AEND before using pointer
 //!
 //!         Rules:
 //!             - lower case first letter for optional (5th bit)
@@ -111,9 +115,6 @@ use zstd::stream::read::Decoder;
 use crate::crypto;
 use crate::buf::fill_buf;
 use crate::hash;
-
-// Selected via https://datatracker.ietf.org/doc/html/draft-main-magic-00
-const MAGIC: [u8; 8] = [0x65, 0x86, 0x89, 0xd8, 0x27, 0xb0, 0xbb, 0x9b];
 
 // 1Kb EDAT frame buffer
 const CHUNK_SIZE: usize = 1 * 1024;
@@ -203,8 +204,8 @@ impl<W: Write> PackBuilder<W> {
             p_idx: 0
         };
 
-        // Start with the magic bits for the file format, inspired by PNG
-        pack.write(&MAGIC).unwrap();
+        // Start with the Archive Header (kinda serves as a magic bits)
+        pack.write(&ltvc(b"AHDR", &[0x01])).unwrap();
         pack
     }
 
@@ -262,8 +263,8 @@ impl<W: Write> PackBuilder<W> {
 
         self.write(&ltvc(b"EDAT", &buf[..])).unwrap();
 
-        // Dump the REND chunk
-        self.write(&ltvc(b"REND", &(f_idx as u32).to_le_bytes())).unwrap();
+        // Dump the AEND chunk
+        self.write(&ltvc(b"AEND", &(f_idx as u32).to_le_bytes())).unwrap();
 
         // Flush to signal to the backend that its done
         self.inner.flush().unwrap();
@@ -287,15 +288,15 @@ impl PackOut {
 
         println!("\t\t\tBuf.len: {:?}", buf.len());
 
-        // Current REND is 16 bytes
+        // Current AEND is 16 bytes
         // TODO: make this more intelligent
-        let (_, typ, rend_dat) = read_ltvc(&buf[buf.len()-16..buf.len()]).unwrap();
-        if &typ == b"REND" {
-            println!("\t\t\tREND parsing");
+        let (_, typ, aend_dat) = read_ltvc(&buf[buf.len()-16..buf.len()]).unwrap();
+        if &typ == b"AEND" {
+            println!("\t\t\tAEND parsing");
         }
 
         let i_idx = {
-            let idx_buf:  [u8; 4]  = rend_dat[0..4].try_into().unwrap();
+            let idx_buf:  [u8; 4]  = aend_dat[0..4].try_into().unwrap();
             u32::from_le_bytes(idx_buf) as usize
         };
 
