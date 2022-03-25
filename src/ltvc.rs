@@ -170,6 +170,11 @@ pub struct LtvcReader<R: Read> {
 }
 
 // TODO: have these entries hold Read trait not the EdatReader
+// TODO: may still be better to return the EdatReader so you can invoke .skip()
+// to force the stream to skip to the next non-edat chunk
+// TODO: may still be a bit too high level here, might work better to have
+// the edat reader on its own enum entry and do invarant requirements at
+// the packfile level.
 pub enum LtvcEntry<R: Read> {
     Ahdr {
         version: u8,
