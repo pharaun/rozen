@@ -1,7 +1,12 @@
 use std::io::{Error, Read, Write};
+use std::iter::Peekable;
+use std::str::from_utf8;
 
-use byteorder::{ReadBytesExt, LittleEndian};
+use byteorder::{ReadBytesExt, LittleEndian, ByteOrder};
 use thiserror::Error;
+
+// Single threaded but we are on one thread here for now
+use std::rc::Rc;
 
 use crate::hash::Checksum;
 use crate::hash::Hash;
@@ -98,6 +103,7 @@ pub struct LtvcReaderRaw<R: Read> {
 
 // This only returns valid entry, invalid will be an Error string
 pub struct LtvcEntryRaw {
+    // TODO: do we still need the length?
     pub length: usize,
     pub typ: [u8; 4],
     pub data: Vec<u8>,
@@ -163,44 +169,109 @@ impl<R: Read> Iterator for LtvcReaderRaw<R> {
 
 
 pub struct LtvcReader<R: Read> {
-    inner: LtvcReaderRaw<R>,
+    inner: Rc<Peekable<LtvcReaderRaw<R>>>,
 }
 
-pub enum LtvcEntry {
+// TODO: have these entries hold Read trait not the EdatReader
+pub enum LtvcEntry<R: Read> {
     Ahdr {
         version: u8,
     },
-    Fdat {
+    Fhdr {
         hash: Hash,
-        edat: Vec<u8>,
+        edat: EdatReader<R>,
     },
     Fidx {
-        edat: Vec<u8>,
+        edat: EdatReader<R>,
     },
     Aend {
         idx: usize,
     }
 }
 
+pub struct EdatReader<R: Read> {
+    inner: Rc<Peekable<LtvcReaderRaw<R>>>,
+}
+
+impl<R: Read> Read for EdatReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // TODO: implement this
+        // 1. Peek to see if its not EDAT, if its not, abort (EoF)
+        // 2. next() to get the next block of vector, grab that and use it to
+        //  provide us a buffer to read from for this function, when empty, repeat 1
+        Ok(0)
+    }
+}
+
 impl<R: Read> LtvcReader<R> {
     pub fn new(reader: R) -> Self {
         LtvcReader {
-            inner: LtvcReaderRaw {
+            inner: Rc::new(LtvcReaderRaw {
                 inner: reader,
-            },
+            }.peekable()),
         }
     }
 }
 
-// TODO: may need to use a shared ref betwene the Fdat/Fidx reader
-// and the iterator, so that when we are in read mode we can continue
-// to consume from the iterator then stop, possibly with a peekable iterator
-// to stow next result for the next regular iterator invocation
 impl<R: Read> Iterator for LtvcReader<R> {
-    type Item = Result<LtvcEntry, LtvcError>;
+    type Item = Result<LtvcEntry<R>, LtvcError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        None
+        let it = Rc::get_mut(&mut self.inner);
+        if it.is_none() {
+            panic!("Overlap mut of ltvc iter");
+        }
+        match it.unwrap().next() {
+            None            => None,
+            Some(Err(x))    => Some(Err(x)),
+            Some(Ok(entry)) => {
+                match &entry.typ {
+                    b"AHDR" => {
+                        // data should be 1 byte long, the version
+                        if entry.data.len() != 1 {
+                            panic!("AHDR isn't only version");
+                        }
+                        Some(Ok(LtvcEntry::Ahdr {
+                            version: entry.data[0],
+                        }))
+                    },
+                    b"FHDR" => {
+                        // Should be 32 bytes long for the hash
+                        if entry.data.len() != 32 {
+                            panic!("FHDR malformed HASH length");
+                        }
+                        let hash: [u8; 32] = entry.data.try_into().unwrap();
+
+                        // Setup a EDAT reader
+                        Some(Ok(LtvcEntry::Fhdr {
+                            hash: Hash::from(hash),
+                            edat: EdatReader {
+                                inner: self.inner.clone(),
+                            }
+                        }))
+
+                    },
+                    b"FIDX" => {
+                        // Setup a EDAT reader
+                        Some(Ok(LtvcEntry::Fidx {
+                            edat: EdatReader {
+                                inner: self.inner.clone(),
+                            }
+                        }))
+                    },
+                    b"AEND" => {
+                        if entry.data.len() != 4 {
+                            panic!("AEND isn't only version");
+                        }
+                        Some(Ok(LtvcEntry::Aend {
+                            idx: LittleEndian::read_u32(&entry.data) as usize,
+                        }))
+                    },
+                    b"EDAT" => panic!("Standalone EDAT shouldn't happen!"),
+                    x       => panic!("Didn't support: {:?}", from_utf8(x)),
+                }
+            },
+        }
     }
 }
 
