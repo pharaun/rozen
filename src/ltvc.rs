@@ -1,5 +1,8 @@
 use std::io::{Error, Read, Write};
 
+use byteorder::{ReadBytesExt, LittleEndian};
+use thiserror::Error;
+
 use crate::hash::Checksum;
 use crate::hash::Hash;
 use crate::buf::fill_buf;
@@ -8,6 +11,7 @@ use crate::buf::fill_buf;
 // TODO: to force ourself to handle sequence of EDAT for now use small
 // chunk size such as 1024
 const CHUNK_SIZE: usize = 1 * 1024;
+const MAX_CHUNK_SIZE: usize = 10 * 1024;
 
 pub struct LtvcBuilder<W: Write> {
     inner: W,
@@ -78,18 +82,128 @@ impl<W: Write> LtvcBuilder<W> {
 }
 
 
-// TODO: make sure to reject too large chunk size for preventing out of memory bugs
-pub struct LtvcReader<R: Read> {
+#[derive(Error, Debug)]
+pub enum LtvcError {
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
+    #[error("permitted max chunk size exceeded")]
+    MaxLengthError,
+    #[error("checksum failed")]
+    ChecksumError,
+}
+
+pub struct LtvcReaderRaw<R: Read> {
     inner: R,
+}
+
+// This only returns valid entry, invalid will be an Error string
+pub struct LtvcEntryRaw {
+    pub length: usize,
+    pub typ: [u8; 4],
+    pub data: Vec<u8>,
+}
+
+impl<R: Read> LtvcReaderRaw<R> {
+    pub fn new(reader: R) -> Self {
+        LtvcReaderRaw {
+            inner: reader,
+        }
+    }
+
+    fn read_entry(&mut self) -> Result<LtvcEntryRaw, LtvcError> {
+        let len = self.inner.read_u32::<LittleEndian>()? as usize;
+        if len > MAX_CHUNK_SIZE {
+            return Err(LtvcError::MaxLengthError);
+        }
+
+        let mut hash = Checksum::new();
+
+        let typ = {
+            let mut typ: [u8; 4] = [0; 4];
+            self.inner.read_exact(&mut typ)?;
+            typ
+        };
+        hash.update(&typ);
+
+        let data = {
+            let mut data = vec![0; len];
+            self.inner.read_exact(&mut data[..])?;
+            data
+        };
+        hash.update(&data[..]);
+
+        // Time to validate the data before we return an entry
+        let entry_hash = self.inner.read_u32::<LittleEndian>()?;
+
+        if hash.finalize() == entry_hash {
+            Ok(LtvcEntryRaw {
+                length: len,
+                typ: typ,
+                data: data,
+            })
+        } else {
+            Err(LtvcError::ChecksumError)
+        }
+    }
+}
+
+impl<R: Read> Iterator for LtvcReaderRaw<R> {
+    type Item = Result<LtvcEntryRaw, LtvcError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // For now if IOError is recieved, assume stream is done and return None
+        match self.read_entry() {
+            // TODO: should be UnexpectedEof
+            Err(LtvcError::IOError(_)) => None,
+            Err(x) => Some(Err(x)),
+            Ok(x)  => Some(Ok(x)),
+        }
+    }
+}
+
+
+pub struct LtvcReader<R: Read> {
+    inner: LtvcReaderRaw<R>,
+}
+
+pub enum LtvcEntry {
+    Ahdr {
+        version: u8,
+    },
+    Fdat {
+        hash: Hash,
+        edat: Vec<u8>,
+    },
+    Fidx {
+        edat: Vec<u8>,
+    },
+    Aend {
+        idx: usize,
+    }
 }
 
 impl<R: Read> LtvcReader<R> {
     pub fn new(reader: R) -> Self {
         LtvcReader {
-            inner: reader,
+            inner: LtvcReaderRaw {
+                inner: reader,
+            },
         }
     }
 }
+
+// TODO: may need to use a shared ref betwene the Fdat/Fidx reader
+// and the iterator, so that when we are in read mode we can continue
+// to consume from the iterator then stop, possibly with a peekable iterator
+// to stow next result for the next regular iterator invocation
+impl<R: Read> Iterator for LtvcReader<R> {
+    type Item = Result<LtvcEntry, LtvcError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        None
+    }
+}
+
 
 
 pub fn read_ltvc(buf: &[u8]) -> Option<(usize, [u8; 4], &[u8])> {
