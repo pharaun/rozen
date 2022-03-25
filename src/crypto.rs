@@ -217,7 +217,7 @@ mod test_encrypt_decrypt_roundtrip {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
             let mut ret: Vec<u8> = Vec::with_capacity(cap);
-            let data = b"Hello World!";
+            let data = b"Hello World!!!!!"; // Must be 16 bytes
 
             for _ in 0..(cap / data.len()) {
                 ret.extend_from_slice(&data[..]);
@@ -323,7 +323,7 @@ mod test_crypt_read {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
             let mut ret: Vec<u8> = Vec::with_capacity(cap);
-            let data = b"Hello World!";
+            let data = b"Hello World!!!!!"; // Must be 16 bytes
 
             for _ in 0..(cap / data.len()) {
                 ret.extend_from_slice(&data[..]);
@@ -376,7 +376,7 @@ mod test_crypt_read {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
             let mut ret: Vec<u8> = Vec::with_capacity(cap);
-            let data = b"Hello World!";
+            let data = b"Hello World!!!!!"; // Must be 16 bytes
 
             for _ in 0..(cap / data.len()) {
                 ret.extend_from_slice(&data[..]);

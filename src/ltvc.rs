@@ -11,6 +11,7 @@ use std::rc::Rc;
 use crate::hash::Checksum;
 use crate::hash::Hash;
 use crate::buf::fill_buf;
+use crate::buf::flush_buf;
 
 // 1Kb EDAT frame buffer
 // TODO: to force ourself to handle sequence of EDAT for now use small
@@ -67,11 +68,9 @@ impl<W: Write> LtvcBuilder<W> {
         let mut in_buf = [0u8; CHUNK_SIZE];
 
         loop {
-            let (eof, len) = fill_buf(reader, &mut in_buf)?;
-            r_len += self.write(b"EDAT", &in_buf[..len])?;
-
-            if eof {
-                break;
+            match fill_buf(reader, &mut in_buf)? {
+                (true, 0) => break,
+                (_, len)  => r_len += self.write(b"EDAT", &in_buf[..len])?,
             }
         }
         Ok(r_len)
@@ -102,9 +101,8 @@ pub struct LtvcReaderRaw<R: Read> {
 }
 
 // This only returns valid entry, invalid will be an Error string
+#[derive(Debug, PartialEq)]
 pub struct LtvcEntryRaw {
-    // TODO: do we still need the length?
-    pub length: usize,
     pub typ: [u8; 4],
     pub data: Vec<u8>,
 }
@@ -143,7 +141,6 @@ impl<R: Read> LtvcReaderRaw<R> {
 
         if hash.finalize() == entry_hash {
             Ok(LtvcEntryRaw {
-                length: len,
                 typ: typ,
                 data: data,
             })
@@ -191,15 +188,35 @@ pub enum LtvcEntry<R: Read> {
 
 pub struct EdatReader<R: Read> {
     inner: Rc<Peekable<LtvcReaderRaw<R>>>,
+    out_buf: Vec<u8>,
 }
 
 impl<R: Read> Read for EdatReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // TODO: implement this
-        // 1. Peek to see if its not EDAT, if its not, abort (EoF)
-        // 2. next() to get the next block of vector, grab that and use it to
-        //  provide us a buffer to read from for this function, when empty, repeat 1
-        Ok(0)
+        if self.out_buf.is_empty() {
+            // Fetch the next block of EDAT
+            // TODO: handle checksum and other block parsing errors
+            let inner = Rc::get_mut(&mut self.inner).unwrap();
+            if let Some(Ok(peek)) = inner.peek() {
+                if &peek.typ == b"EDAT" {
+                    // We in business, grab it and stow the data in out_buf
+                    let edata = inner.next().unwrap().unwrap();
+
+                    self.out_buf = edata.data;
+                } else {
+                    // No more EDAT or none after, return 0
+                    // TODO: case where there is only header and no edat is error
+                    // catch this case
+                    return Ok(0);
+                }
+            } else {
+                // No more block left to decode
+                return Ok(0);
+            }
+        }
+
+        // At this point we *have* something in out_buf, flush it to the reader
+        Ok(flush_buf(&mut self.out_buf, buf))
     }
 }
 
@@ -247,6 +264,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                             hash: Hash::from(hash),
                             edat: EdatReader {
                                 inner: self.inner.clone(),
+                                out_buf: vec![],
                             }
                         }))
 
@@ -256,6 +274,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         Some(Ok(LtvcEntry::Fidx {
                             edat: EdatReader {
                                 inner: self.inner.clone(),
+                                out_buf: vec![],
                             }
                         }))
                     },
@@ -267,6 +286,8 @@ impl<R: Read> Iterator for LtvcReader<R> {
                             idx: LittleEndian::read_u32(&entry.data) as usize,
                         }))
                     },
+                    // TODO: depends on when, if its after an unconsumed reader, we need to skip
+                    // Otherwise its out of place and is an error
                     b"EDAT" => panic!("Standalone EDAT shouldn't happen!"),
                     x       => panic!("Didn't support: {:?}", from_utf8(x)),
                 }
@@ -276,7 +297,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
 }
 
 
-
+// Deprecate this
 pub fn read_ltvc(buf: &[u8]) -> Option<(usize, [u8; 4], &[u8])> {
     let len_buf: [u8; 4] = buf[0..4].try_into().unwrap();
     let typ_buf: [u8; 4] = buf[4..8].try_into().unwrap();
@@ -303,3 +324,260 @@ pub fn read_ltvc(buf: &[u8]) -> Option<(usize, [u8; 4], &[u8])> {
     }
 }
 
+
+
+#[cfg(test)]
+mod test_ltvc_raw_iterator {
+    use std::io::{Cursor, SeekFrom, Seek};
+    use crate::crypto;
+    use crate::hash;
+    use super::*;
+
+    fn test_hash() -> hash::Hash {
+        let id = crypto::gen_key();
+        hash::Hash::from(id.0)
+    }
+
+    #[test]
+    fn one_ahdr() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_ahdr(0x01).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReaderRaw::new(data);
+
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"AHDR",
+                data: vec![0x01],
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_fhdr() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let hash = test_hash();
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_fhdr(&hash).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReaderRaw::new(data);
+
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"FHDR",
+                data: hash.as_bytes().to_vec(),
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_fidx() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_fidx().unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReaderRaw::new(data);
+
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"FIDX",
+                data: vec![],
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_aend() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_aend(12345).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReaderRaw::new(data);
+
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"AEND",
+                data: vec![57, 48, 0, 0],
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_edat_empty() {
+        let mut edat = Cursor::new(Vec::new());
+
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_edat(&mut edat).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReaderRaw::new(data);
+
+        // TODO: do we want to allow an intentional empty EDAT write?
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_edat_half_buffer() {
+        let test_data: Vec<u8> = {
+            let cap: usize = (0.5 * CHUNK_SIZE as f32) as usize;
+
+            let mut ret: Vec<u8> = Vec::with_capacity(cap);
+            let data = b"Hello World!!!!!"; // Must be 16 bytes
+
+            for _ in 0..(cap / data.len()) {
+                ret.extend_from_slice(&data[..]);
+            }
+
+            ret
+        };
+        let mut edat = Cursor::new(test_data.clone());
+
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_edat(&mut edat).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReaderRaw::new(data);
+
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"EDAT",
+                data: test_data,
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_edat_one_buffer() {
+        let test_data: Vec<u8> = {
+            let cap: usize = (1.0 * CHUNK_SIZE as f32) as usize;
+
+            let mut ret: Vec<u8> = Vec::with_capacity(cap);
+            let data = b"Hello World!!!!!"; // Must be 16 bytes
+
+            for _ in 0..(cap / data.len()) {
+                ret.extend_from_slice(&data[..]);
+            }
+
+            ret
+        };
+        assert_eq!(test_data.len(), CHUNK_SIZE);
+        let mut edat = Cursor::new(test_data.clone());
+
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_edat(&mut edat).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReaderRaw::new(data);
+
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"EDAT",
+                data: test_data,
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_edat_two_buffer() {
+        let test_data: Vec<u8> = {
+            let cap: usize = (2.0 * CHUNK_SIZE as f32) as usize;
+
+            let mut ret: Vec<u8> = Vec::with_capacity(cap);
+            let data = b"Hello World!!!!!"; // Must be 16 bytes
+
+            for _ in 0..(cap / data.len()) {
+                ret.extend_from_slice(&data[..]);
+            }
+
+            ret
+        };
+        assert_eq!(test_data.len(), CHUNK_SIZE * 2);
+        let mut edat = Cursor::new(test_data.clone());
+
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_edat(&mut edat).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReaderRaw::new(data);
+
+        // Split data into halves
+        let split: Vec<&[u8]> = test_data.chunks(CHUNK_SIZE).collect();
+
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"EDAT",
+                data: split.get(0).unwrap().to_vec(),
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"EDAT",
+                data: split.get(1).unwrap().to_vec(),
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+}
