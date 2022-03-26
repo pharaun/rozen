@@ -1,6 +1,8 @@
 use std::io::{Error, Read, Write};
 use std::iter::Peekable;
 use std::str::from_utf8;
+use std::fmt::Debug;
+use std::fmt;
 
 use byteorder::{ReadBytesExt, LittleEndian, ByteOrder};
 use thiserror::Error;
@@ -169,22 +171,19 @@ pub struct LtvcReader<R: Read> {
     inner: Rc<Peekable<LtvcReaderRaw<R>>>,
 }
 
-// TODO: have these entries hold Read trait not the EdatReader
 // TODO: may still be better to return the EdatReader so you can invoke .skip()
 // to force the stream to skip to the next non-edat chunk
-// TODO: may still be a bit too high level here, might work better to have
-// the edat reader on its own enum entry and do invarant requirements at
-// the packfile level.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum LtvcEntry<R: Read> {
     Ahdr {
         version: u8,
     },
     Fhdr {
         hash: Hash,
-        edat: EdatReader<R>,
     },
-    Fidx {
-        edat: EdatReader<R>,
+    Fidx,
+    Edat {
+        data: EdatReader<R>,
     },
     Aend {
         idx: usize,
@@ -194,6 +193,23 @@ pub enum LtvcEntry<R: Read> {
 pub struct EdatReader<R: Read> {
     inner: Rc<Peekable<LtvcReaderRaw<R>>>,
     out_buf: Vec<u8>,
+}
+
+#[cfg(test)]
+impl<R: Read> PartialEq for EdatReader<R> {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+impl<R: Read> Debug for EdatReader<R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Point")
+         .field("inner", &"LtvcReaderRaw Iter".to_string())
+         .field("out_buf", &"Output Buffer".to_string())
+         .finish()
+    }
 }
 
 impl<R: Read> Read for EdatReader<R> {
@@ -267,17 +283,19 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         // Setup a EDAT reader
                         Some(Ok(LtvcEntry::Fhdr {
                             hash: Hash::from(hash),
-                            edat: EdatReader {
-                                inner: self.inner.clone(),
-                                out_buf: vec![],
-                            }
                         }))
 
                     },
-                    b"FIDX" => {
+                    b"FIDX" => Some(Ok(LtvcEntry::Fidx)),
+                    b"EDAT" => {
+                        // TODO: If we skip first EDAT we will get second one with a reader
+                        // over and over... So might be worth adding additional logic to see
+                        // if it has seen at least one edat before if so, automatically skip
+                        // if not already skipped by the EdatReader
+                        //
                         // Setup a EDAT reader
-                        Some(Ok(LtvcEntry::Fidx {
-                            edat: EdatReader {
+                        Some(Ok(LtvcEntry::Edat {
+                            data: EdatReader {
                                 inner: self.inner.clone(),
                                 out_buf: vec![],
                             }
@@ -291,9 +309,6 @@ impl<R: Read> Iterator for LtvcReader<R> {
                             idx: LittleEndian::read_u32(&entry.data) as usize,
                         }))
                     },
-                    // TODO: depends on when, if its after an unconsumed reader, we need to skip
-                    // Otherwise its out of place and is an error
-                    b"EDAT" => panic!("Standalone EDAT shouldn't happen!"),
                     x       => panic!("Didn't support: {:?}", from_utf8(x)),
                 }
             },
@@ -658,3 +673,120 @@ mod test_ltvc_raw_iterator {
         assert!(reader.next().is_none());
     }
 }
+
+
+#[cfg(test)]
+mod test_ltvc_iterator {
+    use std::io::{Cursor, SeekFrom, Seek};
+    use crate::crypto;
+    use crate::hash;
+    use super::*;
+
+    fn test_hash() -> hash::Hash {
+        let id = crypto::gen_key();
+        hash::Hash::from(id.0)
+    }
+
+    #[test]
+    fn one_ahdr() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_ahdr(0x01).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReader::new(data);
+
+        assert_eq!(
+            LtvcEntry::Ahdr {
+                version: 0x01,
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_fhdr() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let hash = test_hash();
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_fhdr(&hash).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReader::new(data);
+
+        assert_eq!(
+            LtvcEntry::Fhdr {
+                hash: hash,
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_fidx() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_fidx().unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReader::new(data);
+
+        assert_eq!(
+            LtvcEntry::Fidx,
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_aend() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_aend(12345).unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReader::new(data);
+
+        assert_eq!(
+            LtvcEntry::Aend {
+                idx: 12345
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+}
+
+
+//pub enum LtvcEntry<R: Read> {
+//    Edat {
+//        data: EdatReader<R>,
+//    },
+//}
+//
+//pub struct EdatReader<R: Read> {
+//    inner: Rc<Peekable<LtvcReaderRaw<R>>>,
+//    out_buf: Vec<u8>,
+//}
