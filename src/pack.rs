@@ -105,7 +105,7 @@
 //!
 
 use std::io::{copy, Read, Write};
-use std::convert::TryInto;
+use std::collections::HashMap;
 use serde::Serialize;
 use serde::Deserialize;
 use bincode;
@@ -114,7 +114,7 @@ use zstd::stream::read::Decoder;
 
 use crate::crypto;
 use crate::hash;
-use crate::ltvc::{LtvcBuilder, read_ltvc};
+use crate::ltvc::{LtvcBuilder, LtvcReader, LtvcEntry};
 
 
 // TODO: do this better - should be a typed pseudo hash instead of a fake hash
@@ -191,100 +191,88 @@ impl<W: Write> PackBuilder<W> {
 }
 
 
-// TODO: have 2 ways to read the packfile, one via the index, in a seek manner, other via start to
-// end
-// Attempt to read a packfile from the backend in a streaming manner
-// TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
 // TODO: for now have this PackOut be a streaming validating pack reader, it stream reads
 // and then cache the idx+data then use that info to validate the fidx and aend
+// TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
 pub struct PackOut {
-    idx: Vec<ChunkIdx>,
-    buf: Vec<u8>,
+    idx: HashMap<hash::Hash, Vec<u8>>,
+    _idx: Vec<ChunkIdx>,
 }
 
 impl PackOut {
     pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
-        let mut buf: Vec<u8> = Vec::new();
-        copy(reader, &mut buf).unwrap();
+        let mut ltvc = LtvcReader::new(reader);
+        let mut idx = HashMap::new();
+        let chunk_idx: Vec<ChunkIdx>;
 
-        println!("\t\t\tBuf.len: {:?}", buf.len());
-
-        // Current AEND is 16 bytes
-        // TODO: make this more intelligent
-        let (_, typ, aend_dat) = read_ltvc(&buf[buf.len()-16..buf.len()]).unwrap();
-        if &typ == b"AEND" {
-            println!("\t\t\tAEND parsing");
+        // Assert that the first entry is an Ahdr with 0x01 as version
+        match ltvc.next() {
+            Some(Ok(LtvcEntry::Ahdr { version })) if version == 0x01 => println!("\t\t\tADHR 0x01"),
+            _ => panic!("is not ahdr with 0x01 as version"),
         }
 
-        let i_idx = {
-            let idx_buf:  [u8; 4]  = aend_dat[0..4].try_into().unwrap();
-            u32::from_le_bytes(idx_buf) as usize
-        };
+        // From now on should be fhdr + edat then terminated by fidx+edat
+        loop {
+            match ltvc.next() {
+                Some(Ok(LtvcEntry::Fhdr { hash })) => {
+                    println!("\t\t\tExtracting Fhdr!");
+                    // We now have the file hash, extract the reader into a buffer
+                    let mut data = vec![];
 
-        println!("\t\t\tIndex offset: {:?}", i_idx);
-        println!("\t\t\tbuf-len: {:?}", buf.len());
+                    match ltvc.next() {
+                        Some(Ok(LtvcEntry::Edat { data: mut y })) => {
+                            let _ = copy(&mut y, &mut data);
+                        },
+                        _ => panic!("Not edat after fhdr"),
+                    }
 
-        // FIDX is 12 bytes, ingest that
-        let (_, typ, _) = read_ltvc(&buf[i_idx..(i_idx+12)]).unwrap();
-        if &typ == b"FIDX" {
-            println!("\t\t\tFIDX parsing");
+                    // Add it to the hash table
+                    idx.insert(hash, data);
+                },
+
+                // Should now be Fidx at this point
+                Some(Ok(LtvcEntry::Fidx)) => {
+                    // Fetch fidx edat
+                    let mut idx_buf: Vec<u8> = Vec::new();
+
+                    match ltvc.next() {
+                        Some(Ok(LtvcEntry::Edat { data: mut y })) => {
+                            let mut dec = crypto::decrypt(&key, &mut y).unwrap();
+                            let mut und = Decoder::new(&mut dec).unwrap();
+                            let _ = copy(&mut und, &mut idx_buf);
+                        },
+                        _ => panic!("Not edat after fidx"),
+                    }
+
+                    // Deserialize the index
+                    chunk_idx = bincode::deserialize(&idx_buf).unwrap();
+
+                    println!("\t\t\tChunk len: {:?}", chunk_idx.len());
+                    break;
+                },
+                _ => panic!("is not fidx or fhdr"),
+            }
         }
 
-        // Fetch the EDAT
-        let (_, typ, edat) = read_ltvc(&buf[(i_idx+12)..]).unwrap();
-        if &typ == b"EDAT" {
-            println!("\t\t\tEDAT parsing");
+        // Verify the aend
+        match ltvc.next() {
+            Some(Ok(LtvcEntry::Aend { idx: _ })) => println!("\t\t\taend!"),
+            _ => panic!("is not aend"),
         }
-        let mut dec = crypto::decrypt(&key, edat).unwrap();
-        let mut und = Decoder::new(&mut dec).unwrap();
 
-        let mut idx_buf: Vec<u8> = Vec::new();
-        copy(&mut und, &mut idx_buf).unwrap();
-
-        // Deserialize the index
-        let chunk_idx: Vec<ChunkIdx> = bincode::deserialize(&idx_buf).unwrap();
-
-        println!("\t\t\tChunk len: {:?}", chunk_idx.len());
+        // Verify there is nothing left
+        match ltvc.next() {
+            None => (),
+            _ => panic!("Should be done, there's more after aend"),
+        }
 
         PackOut {
-            idx: chunk_idx,
-            buf: buf,
+            idx: idx,
+            _idx: chunk_idx,
         }
     }
 
     pub fn find(&self, hash: hash::Hash) -> Option<Vec<u8>> {
-        for c in self.idx.iter() {
-            if c.hash == hash {
-                let mut buf: Vec<u8> = Vec::new();
-                buf.extend_from_slice(&self.buf[c.start_idx..(c.start_idx+c.length)]);
-
-                println!("\t\tFound! for {:?}", hash::to_hex(&hash));
-                println!("\t\t\tCached idx: {:?}, length: {:?}", c.start_idx, c.length);
-                println!("\t\t\tActual idx: {:?}, End idx: {:?}", c.start_idx, (c.start_idx+c.length));
-                println!("\t\t\tbuf: {:?}", buf.len());
-
-                println!("\t\t\tunpack EDAT");
-                let mut out_buf: Vec<u8> = Vec::new();
-                let mut out_idx: usize = 0;
-
-                while out_idx != buf.len() {
-                    let (read_len, typ, edat_dat) = read_ltvc(&buf[out_idx..]).unwrap();
-                    out_idx += read_len;
-
-                    if &typ == b"FHDR" {
-                        println!("\t\t\tSkipping FHDR");
-                    } else {
-                        out_buf.extend(edat_dat);
-                    }
-
-                    println!(
-                        "\t\t\tEDAT read: rlen: {:?}, left: {:?}, total: {:?}, cur_out_len: {:?}",
-                        read_len, buf.len()-out_idx, buf.len(), out_buf.len());
-                }
-
-                return Some(out_buf);
-            }
-        }
-        None
+        self.idx.get(&hash).map(|x| x.clone())
     }
 }

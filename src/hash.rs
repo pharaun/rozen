@@ -6,6 +6,7 @@ use blake3;
 
 use twox_hash::XxHash32;
 use std::hash::Hasher as StdHasher;
+use std::hash::Hash as StdHash;
 use crate::crypto;
 
 use serde::Serializer;
@@ -33,7 +34,7 @@ impl Checksum {
 }
 
 // TODO: improve the blake hash wrap
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug, StdHash)]
 pub struct Hash (blake3::Hash);
 
 // TODO: Should require a 'hash type' here so that we can know

@@ -1,7 +1,9 @@
-use std::io::{Error, Read, Write, copy};
+use std::io::{Error, Read, Write};
 use std::iter::Peekable;
 use std::str::from_utf8;
 use std::fmt::Debug;
+
+#[cfg(test)]
 use std::fmt;
 
 use byteorder::{ReadBytesExt, LittleEndian, ByteOrder};
@@ -245,9 +247,9 @@ impl<R: Read> Read for EdatReader<R> {
 impl<R: Read> LtvcReader<R> {
     pub fn new(reader: R) -> Self {
         LtvcReader {
-            inner: Rc::new(RefCell::new(LtvcReaderRaw {
-                inner: reader,
-            }.peekable())),
+            inner: Rc::new(RefCell::new(
+                LtvcReaderRaw::new(reader).peekable()
+            )),
         }
     }
 }
@@ -314,35 +316,6 @@ impl<R: Read> Iterator for LtvcReader<R> {
         }
     }
 }
-
-
-// Deprecate this
-pub fn read_ltvc(buf: &[u8]) -> Option<(usize, [u8; 4], &[u8])> {
-    let len_buf: [u8; 4] = buf[0..4].try_into().unwrap();
-    let typ_buf: [u8; 4] = buf[4..8].try_into().unwrap();
-
-    let len: usize = u32::from_le_bytes(len_buf) as usize;
-
-    // TODO: this is bad, do this better, don't trust length
-    let dat_buf: &[u8]   = buf[8..(8+len)].try_into().unwrap();
-    let has_buf: [u8; 4] = buf[(8+len)..(8+len+4)].try_into().unwrap();
-
-    let old_hash: u32 = u32::from_le_bytes(has_buf);
-
-    // Validate the hash
-    let mut hash = Checksum::new();
-    hash.update(&typ_buf);
-    hash.update(dat_buf);
-
-    let whole_len = 4 + 4 + len + 4;
-
-    if hash.finalize()  == old_hash {
-        Some((whole_len, typ_buf, dat_buf))
-    } else {
-        None
-    }
-}
-
 
 
 #[cfg(test)]
@@ -676,7 +649,7 @@ mod test_ltvc_raw_iterator {
 
 #[cfg(test)]
 mod test_ltvc_iterator {
-    use std::io::{Cursor, SeekFrom, Seek};
+    use std::io::{Cursor, SeekFrom, Seek, copy};
     use crate::crypto;
     use crate::hash;
     use super::*;
