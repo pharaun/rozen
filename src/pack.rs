@@ -199,6 +199,17 @@ pub struct PackOut {
     _idx: Vec<ChunkIdx>,
 }
 
+// TODO: this should probs be more of a state machine, it starts in state expecting
+// ahdr
+//
+// Then it does the following state transitions
+// start -> ahdr
+//      ahdr -> fhdr - Doesn't need to strictly be fhdr first but
+//      fhdr -> edat1
+//      fidx -> edat2
+//      edat1 -> fhdr, fidx, aend
+//      edat2 -> aend
+// aend -> terminates
 impl PackOut {
     pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
         let mut ltvc = LtvcReader::new(reader);
