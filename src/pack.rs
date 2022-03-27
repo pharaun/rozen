@@ -199,82 +199,84 @@ pub struct PackOut {
     _idx: Vec<ChunkIdx>,
 }
 
-// TODO: this should probs be more of a state machine, it starts in state expecting
-// ahdr
-//
-// Then it does the following state transitions
-// start -> ahdr
-//      ahdr -> fhdr - Doesn't need to strictly be fhdr first but
-//      fhdr -> edat1
-//      fidx -> edat2
-//      edat1 -> fhdr, fidx, aend
-//      edat2 -> aend
-// aend -> terminates
+#[derive(Debug)]
+enum Spo {
+    Start,
+    Ahdr,
+    Fhdr { hash: hash::Hash },
+    FhdrEdat,
+    Fidx,
+    FidxEdat,
+    Aend,
+}
+
 impl PackOut {
     pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
         let mut ltvc = LtvcReader::new(reader);
         let mut idx = HashMap::new();
-        let chunk_idx: Vec<ChunkIdx>;
+        let mut chunk_idx: Vec<ChunkIdx> = vec![];
+        let mut state = Spo::Start;
 
-        // Assert that the first entry is an Ahdr with 0x01 as version
-        match ltvc.next() {
-            Some(Ok(LtvcEntry::Ahdr { version })) if version == 0x01 => println!("\t\t\tADHR 0x01"),
-            _ => panic!("is not ahdr with 0x01 as version"),
-        }
-
-        // From now on should be fhdr + edat then terminated by fidx+edat
         loop {
-            match ltvc.next() {
-                Some(Ok(LtvcEntry::Fhdr { hash })) => {
-                    println!("\t\t\tExtracting Fhdr!");
-                    // We now have the file hash, extract the reader into a buffer
-                    let mut data = vec![];
-
-                    match ltvc.next() {
-                        Some(Ok(LtvcEntry::Edat { data: mut y })) => {
-                            let _ = copy(&mut y, &mut data);
-                        },
-                        _ => panic!("Not edat after fhdr"),
-                    }
-
-                    // Add it to the hash table
-                    idx.insert(hash, data);
+            match (state, ltvc.next()) {
+                // Assert that the first entry is an Ahdr with 0x01 as version
+                (Spo::Start, Some(Ok(LtvcEntry::Ahdr { version }))) if version == 0x01 => {
+                    println!("\t\t\tAHDR 0x01");
+                    state = Spo::Ahdr;
                 },
 
-                // Should now be Fidx at this point
-                Some(Ok(LtvcEntry::Fidx)) => {
-                    // Fetch fidx edat
-                    let mut idx_buf: Vec<u8> = Vec::new();
+                // Assert that Fhdr follows the Ahdr, FhdrEdat
+                (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash }))) |
+                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fhdr { hash }))) => {
+                    println!("\t\t\tFhdr <hash>");
+                    state = Spo::Fhdr { hash };
+                },
 
-                    match ltvc.next() {
-                        Some(Ok(LtvcEntry::Edat { data: mut y })) => {
-                            let mut dec = crypto::decrypt(&key, &mut y).unwrap();
-                            let mut und = Decoder::new(&mut dec).unwrap();
-                            let _ = copy(&mut und, &mut idx_buf);
-                        },
-                        _ => panic!("Not edat after fidx"),
-                    }
+                // Assert that Fhdr Edat follows the Fhdr
+                (Spo::Fhdr { hash }, Some(Ok(LtvcEntry::Edat { mut data }))) => {
+                    println!("\t\t\tFhdr Edat");
+                    let mut out_data = vec![];
+                    copy(&mut data, &mut out_data).unwrap();
+
+                    idx.insert(hash, out_data);
+                    state = Spo::FhdrEdat;
+                },
+
+                // Assert that Fidx follows FhdrEdat
+                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fidx))) => {
+                    println!("\t\t\tFidx");
+                    state = Spo::Fidx;
+                },
+
+                // Assert that Fidx Edat follows Fidx
+                (Spo::Fidx, Some(Ok(LtvcEntry::Edat { mut data }))) => {
+                    println!("\t\t\tFidx Edat");
+                    let mut idx_buf: Vec<u8> = Vec::new();
+                    let mut dec = crypto::decrypt(&key, &mut data).unwrap();
+                    let mut und = Decoder::new(&mut dec).unwrap();
+                    copy(&mut und, &mut idx_buf).unwrap();
 
                     // Deserialize the index
                     chunk_idx = bincode::deserialize(&idx_buf).unwrap();
-
-                    println!("\t\t\tChunk len: {:?}", chunk_idx.len());
-                    break;
+                    println!("\t\t\t\tChunk len: {:?}", chunk_idx.len());
+                    state = Spo::FidxEdat;
                 },
-                _ => panic!("is not fidx or fhdr"),
+
+                // Assert that Aend follows FidxEdat
+                (Spo::FidxEdat, Some(Ok(LtvcEntry::Aend { idx: _ }))) => {
+                    println!("\t\t\tAend");
+                    state = Spo::Aend;
+                },
+
+                // Asserts that the iterator is terminated
+                (Spo::Aend, None) => break,
+
+                // Unhandled states
+                // TODO: improve debuggability
+                (s, None)         => panic!("In state: {:?} unexpected end of iterator", s),
+                (s, Some(Err(_))) => panic!("In state: {:?} error on iterator", s),
+                (s, Some(Ok(_)))  => panic!("In state: {:?} unknown LtvcEntry", s),
             }
-        }
-
-        // Verify the aend
-        match ltvc.next() {
-            Some(Ok(LtvcEntry::Aend { idx: _ })) => println!("\t\t\taend!"),
-            _ => panic!("is not aend"),
-        }
-
-        // Verify there is nothing left
-        match ltvc.next() {
-            None => (),
-            _ => panic!("Should be done, there's more after aend"),
         }
 
         PackOut {
