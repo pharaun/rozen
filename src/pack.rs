@@ -114,7 +114,8 @@ use zstd::stream::read::Decoder;
 
 use crate::crypto;
 use crate::hash;
-use crate::ltvc::{LtvcBuilder, LtvcReader, LtvcEntry};
+use crate::ltvc::builder::LtvcBuilder;
+use crate::ltvc::reader::{LtvcReader, LtvcEntry};
 
 
 // TODO: do this better - should be a typed pseudo hash instead of a fake hash
