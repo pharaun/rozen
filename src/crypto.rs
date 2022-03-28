@@ -49,6 +49,21 @@ pub struct Crypter<R, E> {
     out_buf: Vec<u8>,
 }
 
+// Encryption
+//     - Investigate padding (PADME?) for anonomyizing file size to reduce identification
+//     - Chunk/file size is information leak
+//          One way to consider information leak is pack file is purely an optimization for
+//          glacier store in which the index can be stored in S3 + packfile, and the specified
+//          byte range be fetched out of glacier. This leads me to interpret any information leak
+//          is also the same as a stand-alone blob in glacier store so... treat both the same.
+//          packfile == packed blobs
+//
+//          Now mind you there *is* information leak via the length cos of compression/plaintext
+//          but blob storage would have this as well so resolving blob storage + etc will be good
+//          to have also this is more for chunked data ala borg/restic/etc
+//
+//     - Use the phash (file HMAC) for additional data with the encryption to ensure that
+//     the encrypted data matches the phash
 pub fn encrypt<R: Read>(key: &Key, reader: R) -> CResult<Crypter<R, EncEngine>> {
     let (stream, header) = Stream::init_push(&key).map_err(|_| CryptoError::InitPushError)?;
     let engine = EncEngine(stream);
