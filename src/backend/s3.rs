@@ -99,19 +99,6 @@ impl Backend for S3 {
         }))
     }
 
-    fn write<R: Read>(&self, key: &hash::Hash, reader: R) -> Result<(), String> {
-        self.write_filename(
-            &hash::to_hex(key),
-            reader
-        )
-    }
-
-    fn read(&mut self, key: &hash::Hash) -> Result<Box<dyn Read>, String> {
-        self.read_filename(
-            &hash::to_hex(key),
-        )
-    }
-
     fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
         let call = self.client.create_multipart_upload().
             bucket("test").

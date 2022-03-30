@@ -13,8 +13,17 @@ pub trait Backend {
     fn read_filename(&mut self, filename: &str) -> Result<Box<dyn Read>, String>;
 
     // Api for reading/Writing hashes to the backend
-    fn write<R: Read>(&self, key: &hash::Hash, reader: R) -> Result<(), String>;
-    fn read(&mut self, key: &hash::Hash) -> Result<Box<dyn Read>, String>;
+    fn write<R: Read>(&self, key: &hash::Hash, reader: R) -> Result<(), String> {
+        self.write_filename(
+            &hash::to_hex(key),
+            reader
+        )
+    }
+    fn read(&mut self, key: &hash::Hash) -> Result<Box<dyn Read>, String> {
+        self.read_filename(
+            &hash::to_hex(key),
+        )
+    }
 
     // Write Multipart, give a write handle and it will handle the streaming
     // TODO: consider if finalize on a trait is better than 'flush' for our purposes
