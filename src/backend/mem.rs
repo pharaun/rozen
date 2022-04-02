@@ -17,8 +17,11 @@ pub struct MemoryVFS {
 }
 
 impl MemoryVFS {
-    pub fn new() -> Self {
-        let conn = Connection::open_in_memory().unwrap();
+    pub fn new(filename: Option<&str>) -> Self {
+        let conn = match filename {
+            None    => Connection::open_in_memory().unwrap(),
+            Some(f) => Connection::open(f).unwrap(),
+        };
 
         // Setup the db
         conn.execute_batch(

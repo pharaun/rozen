@@ -27,16 +27,7 @@ pub fn snapshot<B: Backend>(
     walker: ignore::Walk,
 ) {
     let index = Index::new();
-
-    // Trivial write pack
-    let pack_id = pack::generate_pack_id();
-
-    // Write multipart upload
-    let multiwrite = backend.write_multi(
-        &pack_id,
-    ).unwrap();
-
-    let mut wpack = PackBuilder::new(pack_id, multiwrite);
+    let mut wpack = None;
 
     {
         for entry in walker {
@@ -78,18 +69,29 @@ pub fn snapshot<B: Backend>(
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                 // Stream the data into the pack
-                                wpack.append(
+                                let t_wpack = wpack.get_or_insert_with(|| {
+                                    let pack_id = pack::generate_pack_id();
+                                    let multiwrite = backend.write_multi(&pack_id).unwrap();
+                                    PackBuilder::new(pack_id, multiwrite)
+                                });
+                                let tmp_pack_id = t_wpack.id.clone();
+
+                                if t_wpack.append(
                                     content_hash.clone(),
                                     &mut enc
-                                );
+                                ) {
+                                    wpack.take().unwrap().finalize(&key);
+                                }
 
                                 // Load file info into index
                                 // Snapshot will be '<packfile-id>:<hash-id>' to pull out
                                 //  the content or can just be a list of <hash-id> then another
                                 //  list of <packfile-id> with <hash-id>s
+                                // TODO: better to just store content-id because it can be moved
+                                // around in packfile after compaction
                                 index.insert_file(
                                     e.path(),
-                                    Some(&wpack.id),
+                                    Some(tmp_pack_id),
                                     &content_hash
                                 );
                             } else {
@@ -102,8 +104,10 @@ pub fn snapshot<B: Backend>(
             }
         }
 
-        // Finalize packfile and spool it into the backend
-        wpack.finalize(&key);
+        // Force an finalize if its not already finalized
+        if wpack.is_some() {
+            wpack.take().unwrap().finalize(&key);
+        }
 
         // Spool the sqlite file into the backend as index
         // TODO: update this to support the archive file format defined in pack.rs
@@ -124,4 +128,3 @@ pub fn snapshot<B: Backend>(
         backend.write_filename(&filename, &mut enc).unwrap();
     }
 }
-

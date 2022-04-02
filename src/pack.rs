@@ -11,6 +11,8 @@ use crate::hash;
 use crate::ltvc::builder::LtvcBuilder;
 use crate::ltvc::reader::{LtvcReader, LtvcEntry};
 
+// Aim for 1MB packfile for testing
+const PACK_SIZE: usize = 1 * 1024 * 1024;
 
 // TODO: do this better - should be a typed pseudo hash instead of a fake hash
 pub fn generate_pack_id() -> hash::Hash {
@@ -50,7 +52,7 @@ impl<W: Write> PackBuilder<W> {
         pack
     }
 
-    pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) {
+    pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) -> bool {
         let f_idx = self.p_idx;
 
         self.p_idx += self.inner.write_fhdr(&hash).unwrap();
@@ -61,6 +63,12 @@ impl<W: Write> PackBuilder<W> {
             length: self.p_idx - f_idx,
             hash: hash,
         });
+
+        if self.p_idx >= PACK_SIZE {
+            true
+        } else {
+            false
+        }
     }
 
     // TODO: should hash+hmac various data bits in a packfile

@@ -39,7 +39,7 @@ impl Index {
     }
 
     // TODO: improve the types
-    pub fn insert_file(&self, path: &std::path::Path, pack: Option<&hash::Hash>, hash: &hash::Hash) {
+    pub fn insert_file(&self, path: &std::path::Path, pack: Option<hash::Hash>, hash: &hash::Hash) {
         let mut file_stmt = self.conn.prepare_cached(
             "INSERT INTO files
              (path, permission, pack_hash, content_hash)
@@ -51,7 +51,7 @@ impl Index {
         file_stmt.execute(rs::params![
             format!("{}", path.display()),
             0000,
-            pack.map(|h| hash::to_hex(h)),
+            pack.map(|h| hash::to_hex(&h)),
             hash::to_hex(hash),
         ]).unwrap();
     }

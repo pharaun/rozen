@@ -68,9 +68,9 @@ fn main() {
     let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
     let _stype  = config.sources.get(0).unwrap().source_type;
 
-
     // In memory backend for data storage
-    let mut backend = backend::mem::MemoryVFS::new();
+    //let mut backend = backend::mem::MemoryVFS::new(Some("test.sqlite"));
+    let mut backend = backend::mem::MemoryVFS::new(None);
 
     // Build a s3 backend here
     let mut _backend = backend::s3::S3::new_endpoint("http://localhost:8333").unwrap();
