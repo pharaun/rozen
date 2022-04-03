@@ -21,6 +21,9 @@ pub struct Checksum (XxHash32);
 
 impl Checksum {
     pub fn new() -> Checksum {
+        // TODO: Evaulate seed of 0, might be better to start with a non-zero seed
+        // (verify that feeding a sequence of 0 doesn't end up with the checksum being 0)
+        // (Check ordering ie 0x00 + 0x01 vs 0x01 + 0x00 == same checksum for eg)
         Checksum(XxHash32::with_seed(0))
     }
 

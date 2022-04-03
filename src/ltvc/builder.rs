@@ -29,6 +29,9 @@ impl<W: Write> LtvcBuilder<W> {
         hash.update(chunk_type);
         hash.update(data);
 
+        // TODO: we want data checksum, and possibly a separate checksum for header, but
+        // not sure about space usage (probs a 8bit checksum for header but it will then
+        // be 9 bytes versus 8 bytes long?)
         let mut len = 0;
         len += self.inner.write(&(data.len() as u32).to_le_bytes())?;
         len += self.inner.write(chunk_type)?;
