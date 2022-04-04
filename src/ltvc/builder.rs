@@ -21,22 +21,28 @@ impl<W: Write> LtvcBuilder<W> {
         self.inner
     }
 
-    // TODO: Evaulate the need for a hash
-    // Length, Type, Value, xxhash32 of Type+Value
-    // u32, u32, [u8; N], u32
+    // TODO: Evaulate the need for a mandatory hash (evaulate crc instead?)
+    // TODO: improve this whole block
     fn write(&mut self, chunk_type: &[u8; 4], data: &[u8]) -> Result<usize, Error> {
-        let mut hash = Checksum::new();
-        hash.update(chunk_type);
-        hash.update(data);
+        let data_len = (data.len() as u32).to_le_bytes();
+        let header_hash = {
+            let mut hash = Checksum::new();
+            hash.update(&data_len);
+            hash.update(chunk_type);
+            hash.finalize() as u16
+        };
+        let trailing_hash = {
+            let mut hash = Checksum::new();
+            hash.update(data);
+            hash.finalize() as u32
+        };
 
-        // TODO: we want data checksum, and possibly a separate checksum for header, but
-        // not sure about space usage (probs a 8bit checksum for header but it will then
-        // be 9 bytes versus 8 bytes long?)
         let mut len = 0;
-        len += self.inner.write(&(data.len() as u32).to_le_bytes())?;
+        len += self.inner.write(&data_len)?;
         len += self.inner.write(chunk_type)?;
+        len += self.inner.write(&header_hash.to_le_bytes())?;
         len += self.inner.write(data)?;
-        len += self.inner.write(&hash.finalize().to_le_bytes())?;
+        len += self.inner.write(&trailing_hash.to_le_bytes())?;
 
         Ok(len)
     }

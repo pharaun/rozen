@@ -27,8 +27,9 @@
 //! | ------: | -------- | ----------- |
 //! | u32     | length   | The length of the value section of a chunk, is allowed to be 0 bytes |
 //! | [u8; 4] | type     | The type of the chunk, usually ASCII such as `AHDR` but is not required |
+//! | u16     | header checksum | The checksum of <code>length \|\| type</code> concated together |
 //! | [u8; N] | value    | The content of the chunk, interpret according to the chunk type |
-//! | u32     | checksum | The checksum of <code>type \|\| value</code> concated together |
+//! | u32     | checksum | The checksum of `value` |
 //!
 //! # Chunk Types
 //!

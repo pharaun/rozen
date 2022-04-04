@@ -54,6 +54,8 @@ impl Backend for S3 {
         ))
     }
 
+    // TODO: this and the multipart api needs to also do various checksums to pass on to s3
+    // so that the s3 can verify the data integrity server-end
     fn write_filename<R: Read>(&self, filename: &str, mut reader: R) -> Result<(), String> {
         // TODO: Less bad, still buffer it all in memory, but we can at least
         // manage the read here so we should be able to do something reasonable
@@ -76,6 +78,8 @@ impl Backend for S3 {
         Ok(())
     }
 
+    // TODO: if this is a multipart uploaded it could be possible to fetch each part and
+    // verify its checksum and so on before returning it to the backup system?
     fn read_filename(&mut self, filename: &str) -> Result<Box<dyn Read>, String> {
         // Do s3 dance to fetch a object and buffer it locally
         let call = self.client.get_object().

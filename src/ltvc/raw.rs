@@ -15,6 +15,8 @@ pub enum LtvcError {
     MaxLengthError,
     #[error("checksum failed")]
     ChecksumError,
+    #[error("header checksum failed")]
+    HeaderChecksumError,
 }
 
 pub struct LtvcReaderRaw<R: Read> {
@@ -36,29 +38,40 @@ impl<R: Read> LtvcReaderRaw<R> {
     }
 
     fn read_entry(&mut self) -> Result<LtvcEntryRaw, LtvcError> {
-        let len = self.inner.read_u32::<LittleEndian>()? as usize;
+        let (len, typ) = {
+            let len = self.inner.read_u32::<LittleEndian>()?;
+            let typ = {
+                let mut typ: [u8; 4] = [0; 4];
+                self.inner.read_exact(&mut typ)?;
+                typ
+            };
+            let header_hash = self.inner.read_u16::<LittleEndian>()?;
+
+            let mut hash = Checksum::new();
+            hash.update(&len.to_le_bytes());
+            hash.update(&typ);
+
+            // Validate the header
+            if (hash.finalize() as u16) != header_hash {
+                return Err(LtvcError::HeaderChecksumError)
+            }
+
+            (len as usize, typ)
+        };
+
         if len > MAX_CHUNK_SIZE {
             return Err(LtvcError::MaxLengthError);
         }
-
-        let mut hash = Checksum::new();
-
-        let typ = {
-            let mut typ: [u8; 4] = [0; 4];
-            self.inner.read_exact(&mut typ)?;
-            typ
-        };
-        hash.update(&typ);
 
         let data = {
             let mut data = vec![0; len];
             self.inner.read_exact(&mut data[..])?;
             data
         };
-        hash.update(&data[..]);
-
-        // Time to validate the data before we return an entry
         let entry_hash = self.inner.read_u32::<LittleEndian>()?;
+
+        let mut hash = Checksum::new();
+        hash.update(&data[..]);
 
         if hash.finalize() == entry_hash {
             Ok(LtvcEntryRaw {

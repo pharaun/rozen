@@ -79,6 +79,12 @@ fn main() {
     //  * I-<timestamp> = index
     //  * P-<rng>  = packfile (only one that isn't hash)
     //  * B-<hash> = raw blob (big files)
+    // TODO: how to handle files larger than X size (ie S3 only allow file up to X for eg)
+    //  * Do we want to support chunking, could possibly do it via
+    //  * B-<hash>.p0
+    //  * B-<hash>.p1
+    //  * B-<hash>.p? - I'm not sure, could have B-<hash> -> metadata -> B-<hash>.p? but could
+    //      also just always have the B-<hash> xor B-<hash>.p?
     let datetime = OffsetDateTime::now_utc();
     append::snapshot(
         &key,

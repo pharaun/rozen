@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn basic_read_write() {
-        let mut back = MemoryVFS::new();
+        let mut back = MemoryVFS::new(None);
         let key = "test-key";
 
         let data: &[u8; 9] = b"Test Data";
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn overwrite_read_write() {
-        let mut back = MemoryVFS::new();
+        let mut back = MemoryVFS::new(None);
         let key = "test-key";
 
         let data: &[u8; 9] = b"Test Data";
