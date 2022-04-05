@@ -67,6 +67,7 @@
 //! | Type     | Name    | Description |
 //! | -------: | ------- | ----------- |
 //! | [u8; 32] | hash    | The keyed HMAC hash of the file content |
+//! | u16      | parts   | Starts at 0, a file can be split in more than 1 part |
 //!
 //! ## FIDX
 //!

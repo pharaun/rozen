@@ -34,10 +34,17 @@ pub struct PackBuilder<W: Write> {
 struct ChunkIdx {
     start_idx: usize,
     length: usize,
+    chunk: u16,
     hash: hash::Hash,
 }
 
 // TODO: implement drop to call finalize
+// TODO: implement some form of split for too large files here
+//  * Allow the archive to go over x% (or) allow chunks/file to go over xMB
+//  * if they go over, they get split. All parts start with 'part count 0'
+//  * If there's more then it becomes <hash>.p1....???
+//  * Need to figure out a good way to handle the indexing or might just delegate
+//  to higher layer and just index on 'hash + part -> idx + len'
 impl<W: Write> PackBuilder<W> {
     pub fn new(id: hash::Hash, writer: W) -> Self {
         let mut pack = PackBuilder {
@@ -55,12 +62,14 @@ impl<W: Write> PackBuilder<W> {
     pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) -> bool {
         let f_idx = self.p_idx;
 
-        self.p_idx += self.inner.write_fhdr(&hash).unwrap();
+        // TODO: handle split up chunked files but for now 0 part
+        self.p_idx += self.inner.write_fhdr(&hash, 0).unwrap();
         self.p_idx += self.inner.write_edat(reader).unwrap();
 
         self.idx.push(ChunkIdx {
             start_idx: f_idx,
             length: self.p_idx - f_idx,
+            chunk: 0,
             hash: hash,
         });
 
@@ -106,7 +115,7 @@ pub struct PackOut {
 enum Spo {
     Start,
     Ahdr,
-    Fhdr { hash: hash::Hash },
+    Fhdr { hash: hash::Hash, chunk: u16 },
     FhdrEdat,
     Fidx,
     FidxEdat,
@@ -129,15 +138,15 @@ impl PackOut {
                 },
 
                 // Assert that Fhdr follows the Ahdr, FhdrEdat
-                (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash }))) |
-                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fhdr { hash }))) => {
+                (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash, chunk }))) |
+                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fhdr { hash, chunk }))) => {
                     println!("\t\t\tFhdr <hash>");
-                    state = Spo::Fhdr { hash };
+                    state = Spo::Fhdr { hash, chunk };
                 },
 
                 // Assert that Fhdr Edat follows the Fhdr
-                (Spo::Fhdr { hash }, Some(Ok(LtvcEntry::Edat { mut data }))) => {
-                    println!("\t\t\tFhdr Edat");
+                (Spo::Fhdr { hash, chunk }, Some(Ok(LtvcEntry::Edat { mut data }))) => {
+                    println!("\t\t\tFhdr Edat - {:?}", chunk);
                     let mut out_data = vec![];
                     copy(&mut data, &mut out_data).unwrap();
 

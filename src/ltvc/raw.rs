@@ -26,6 +26,10 @@ pub struct LtvcReaderRaw<R: Read> {
 // This only returns valid entry, invalid will be an Error string
 #[derive(Debug, PartialEq)]
 pub struct LtvcEntryRaw {
+    // TODO: consider the merit of 4 bytes type? with 4 flag value in future
+    // versus 1x 8byte type + 8byte flag field.
+    // u32, u8, u8, u16 vs u32, u32, u16.
+    // Also this opens the question of the u16 checksum or if a 8bit checksum/crc8 is fine?
     pub typ: [u8; 4],
     pub data: Vec<u8>,
 }
@@ -143,7 +147,7 @@ mod test_ltvc_raw_iterator {
         let data = Cursor::new(Vec::new());
         let hash = test_hash();
         let mut builder = LtvcBuilder::new(data);
-        builder.write_fhdr(&hash).unwrap();
+        builder.write_fhdr(&hash, 5).unwrap();
 
         // Reset stream
         let mut data = builder.to_inner();
@@ -155,7 +159,11 @@ mod test_ltvc_raw_iterator {
         assert_eq!(
             LtvcEntryRaw {
                 typ: *b"FHDR",
-                data: hash.as_bytes().to_vec(),
+                data: {
+                    let mut data = hash.as_bytes().to_vec();
+                    data.extend_from_slice(&(5 as u16).to_le_bytes());
+                    data
+                },
             },
             reader.next().unwrap().unwrap()
         );
@@ -369,7 +377,7 @@ mod test_ltvc_raw_iterator {
         let mut builder = LtvcBuilder::new(data);
 
         builder.write_ahdr(0x01).unwrap();
-        builder.write_fhdr(&hash).unwrap();
+        builder.write_fhdr(&hash, 5).unwrap();
         builder.write_edat(&mut edat1).unwrap();
         builder.write_fidx().unwrap();
         builder.write_edat(&mut edat2).unwrap();
@@ -393,7 +401,11 @@ mod test_ltvc_raw_iterator {
         assert_eq!(
             LtvcEntryRaw {
                 typ: *b"FHDR",
-                data: hash.as_bytes().to_vec(),
+                data: {
+                    let mut data = hash.as_bytes().to_vec();
+                    data.extend_from_slice(&(5 as u16).to_le_bytes());
+                    data
+                },
             },
             reader.next().unwrap().unwrap()
         );
