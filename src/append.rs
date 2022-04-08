@@ -2,6 +2,7 @@ use std::io::{Seek, SeekFrom};
 use zstd::stream::read::Encoder;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use std::collections::HashSet;
 
 use crate::index::Index;
 use crate::crypto;
@@ -9,6 +10,7 @@ use crate::backend::Backend;
 use crate::pack::PackBuilder;
 use crate::pack;
 use crate::hash;
+use crate::chunk;
 
 // TODO: can probs make the snapshot be strictly focused on snapshot concerns such as
 // - deciding what files needs to be stored in a snapshot
@@ -66,18 +68,24 @@ pub fn snapshot<B: Backend>(
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                 // Stream the data into the pack
-                                let t_wpack = wpack.get_or_insert_with(|| {
-                                    let pack_id = pack::generate_pack_id();
-                                    let multiwrite = backend.write_multi(&pack_id).unwrap();
-                                    PackBuilder::new(pack_id, multiwrite)
-                                });
-                                let tmp_pack_id = t_wpack.id.clone();
+                                let mut chunker = chunk::Chunk::new(&mut enc);
+                                let mut pack_id: HashSet<hash::Hash> = HashSet::new();
 
-                                if t_wpack.append(
-                                    content_hash.clone(),
-                                    &mut enc
-                                ) {
-                                    wpack.take().unwrap().finalize(&key);
+                                while let Some((mut chunk, part)) = chunker.next() {
+                                    let t_wpack = wpack.get_or_insert_with(|| {
+                                        let pack_id = pack::generate_pack_id();
+                                        let multiwrite = backend.write_multi(&pack_id).unwrap();
+                                        PackBuilder::new(pack_id, multiwrite)
+                                    });
+                                    pack_id.insert(t_wpack.id.clone());
+
+                                    if t_wpack.append(
+                                        content_hash.clone(),
+                                        part,
+                                        &mut chunk
+                                    ) {
+                                        wpack.take().unwrap().finalize(&key);
+                                    }
                                 }
 
                                 // Load file info into index
@@ -88,7 +96,7 @@ pub fn snapshot<B: Backend>(
                                 // around in packfile after compaction
                                 index.insert_file(
                                     e.path(),
-                                    Some(tmp_pack_id),
+                                    pack_id,
                                     &content_hash
                                 );
                             } else {

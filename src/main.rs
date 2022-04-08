@@ -16,6 +16,7 @@ mod pack;
 mod buf;
 mod hash;
 mod ltvc;
+mod chunk;
 use crate::index::Index;
 
 // Configuration
@@ -112,15 +113,20 @@ fn main() {
     // Dump the sqlite db data so we can view what it is
     println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");
     index.walk_files(|path, perm, pack, hash| {
-        let pack = pack.unwrap();
+        // For now bail if multi-pack + multi chunk hash
+        if pack.len() > 1 {
+            panic!("Too many packs involved");
+        }
+
+        let pack = &pack.into_iter().collect::<Vec<hash::Hash>>()[0];
         println!("HASH: {:?}", hash);
         println!("\tPACK: {:?}", pack);
 
         // Find or load the packfile
-        if !pack_cache.contains_key(&pack) {
+        if !pack_cache.contains_key(pack) {
             println!("\t\tLoading: {:?}", pack);
 
-            let mut pack_read = Backend::read(&mut backend, &hash::from_hex(&pack).unwrap()).unwrap();
+            let mut pack_read = Backend::read(&mut backend, &pack).unwrap();
             let pack_file = pack::PackOut::load(&mut pack_read, &key);
 
             pack_cache.insert(
@@ -130,7 +136,7 @@ fn main() {
         }
 
         // Read from the packfile
-        let data = pack_cache.get(&pack).unwrap().find(hash::from_hex(hash).unwrap()).unwrap();
+        let data = pack_cache.get(&pack).unwrap().find(hash.clone()).unwrap();
 
         // Process the data
         let mut dec = crypto::decrypt(&key, &data[..]).unwrap();
@@ -140,16 +146,8 @@ fn main() {
         println!("\tPATH: {:?}", path);
         println!("\tPERM: {:?}", perm);
 
-        match hash::from_hex(hash.clone()) {
-            Ok(data_hash) => {
-                let is_same = data_hash == content_hash;
-
-                println!("\tSAME: {:5}", is_same);
-            },
-            Err(_) => {
-                println!("\tSAME: {:5}", "-----");
-            },
-        }
+        let is_same = hash == content_hash;
+        println!("\tSAME: {:5}", is_same);
     });
     index.close();
 }

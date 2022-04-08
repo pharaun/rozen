@@ -2,6 +2,7 @@ use rusqlite as rs;
 
 use std::io::{Seek, SeekFrom, copy, Read};
 use rusqlite::Connection;
+use std::collections::HashSet;
 
 use crate::hash;
 
@@ -25,7 +26,7 @@ impl Index {
              CREATE TABLE files (
                 path VARCHAR NOT NULL,
                 permission INTEGER NOT NULL,
-                pack_hash VARCHAR,
+                pack_hash VARCHAR NOT NULL,
                 content_hash VARCHAR NOT NULL
              );
              COMMIT;"
@@ -39,7 +40,12 @@ impl Index {
     }
 
     // TODO: improve the types
-    pub fn insert_file(&self, path: &std::path::Path, pack: Option<hash::Hash>, hash: &hash::Hash) {
+    pub fn insert_file(
+        &self,
+        path: &std::path::Path,
+        packs: HashSet<hash::Hash>,
+        hash: &hash::Hash
+    ) {
         let mut file_stmt = self.conn.prepare_cached(
             "INSERT INTO files
              (path, permission, pack_hash, content_hash)
@@ -51,14 +57,14 @@ impl Index {
         file_stmt.execute(rs::params![
             format!("{}", path.display()),
             0000,
-            pack.map(|h| hash::to_hex(&h)),
+            packs.into_iter().map(|h| hash::to_hex(&h)).collect::<Vec<String>>().join(","),
             hash::to_hex(hash),
         ]).unwrap();
     }
 
     pub fn walk_files<F>(&self, mut f: F)
     where
-        F: FnMut(&str, u32, Option<String>, &str)
+        F: FnMut(&str, u32, HashSet<hash::Hash>, hash::Hash)
     {
         let mut dump_stmt = self.conn.prepare_cached(
             "SELECT path, permission, pack_hash, content_hash FROM files"
@@ -68,10 +74,16 @@ impl Index {
         while let Ok(Some(row)) = rows.next() {
             let path: String = row.get(0).unwrap();
             let perm: u32 = row.get(1).unwrap();
-            let pack: Option<String> = row.get(2).ok();
+            let pack: String = row.get(2).unwrap();
             let hash: String = row.get(3).unwrap();
 
-            f(path.as_str(), perm, pack, hash.as_str());
+            // convert packs into hashset
+            let packs: HashSet<hash::Hash> = pack
+                .split(",")
+                .map(|x| hash::from_hex(x).unwrap())
+                .collect();
+
+            f(path.as_str(), perm, packs, hash::from_hex(&hash).unwrap())
         }
     }
 

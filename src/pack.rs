@@ -59,17 +59,16 @@ impl<W: Write> PackBuilder<W> {
         pack
     }
 
-    pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) -> bool {
+    pub fn append<R: Read>(&mut self, hash: hash::Hash, chunk: u16, reader: &mut R) -> bool {
         let f_idx = self.p_idx;
 
-        // TODO: handle split up chunked files but for now 0 part
-        self.p_idx += self.inner.write_fhdr(&hash, 0).unwrap();
+        self.p_idx += self.inner.write_fhdr(&hash, chunk).unwrap();
         self.p_idx += self.inner.write_edat(reader).unwrap();
 
         self.idx.push(ChunkIdx {
             start_idx: f_idx,
             length: self.p_idx - f_idx,
-            chunk: 0,
+            chunk: chunk,
             hash: hash,
         });
 
@@ -125,7 +124,7 @@ enum Spo {
 impl PackOut {
     pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
         let mut ltvc = LtvcReader::new(reader);
-        let mut idx = HashMap::new();
+        let mut idx: HashMap<hash::Hash, Vec<u8>> = HashMap::new();
         let mut chunk_idx: Vec<ChunkIdx> = vec![];
         let mut state = Spo::Start;
 
@@ -150,7 +149,12 @@ impl PackOut {
                     let mut out_data = vec![];
                     copy(&mut data, &mut out_data).unwrap();
 
-                    idx.insert(hash, out_data);
+                    // Basic, assume for now that all parts are in one pack file
+                    if let Some(dat) = idx.get_mut(&hash) {
+                        dat.append(&mut out_data);
+                    } else {
+                        idx.insert(hash, out_data);
+                    }
                     state = Spo::FhdrEdat;
                 },
 
