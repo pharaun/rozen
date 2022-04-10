@@ -11,8 +11,8 @@ use crate::hash;
 use crate::ltvc::builder::LtvcBuilder;
 use crate::ltvc::reader::{LtvcReader, LtvcEntry};
 
-// Aim for 1MB packfile for testing
-const PACK_SIZE: usize = 1 * 1024 * 1024;
+// TODO: set to 1gb at some point
+const PACK_SIZE: usize = 4 * 1024;
 
 // TODO: do this better - should be a typed pseudo hash instead of a fake hash
 pub fn generate_pack_id() -> hash::Hash {
@@ -106,7 +106,7 @@ impl<W: Write> PackBuilder<W> {
 // and then cache the idx+data then use that info to validate the fidx and aend
 // TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
 pub struct PackOut {
-    idx: HashMap<hash::Hash, Vec<u8>>,
+    idx: HashMap<hash::Hash, Vec<(u16, Vec<u8>)>>,
     _idx: Vec<ChunkIdx>,
 }
 
@@ -124,7 +124,7 @@ enum Spo {
 impl PackOut {
     pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
         let mut ltvc = LtvcReader::new(reader);
-        let mut idx: HashMap<hash::Hash, Vec<u8>> = HashMap::new();
+        let mut idx: HashMap<hash::Hash, Vec<(u16, Vec<u8>)>> = HashMap::new();
         let mut chunk_idx: Vec<ChunkIdx> = vec![];
         let mut state = Spo::Start;
 
@@ -149,11 +149,10 @@ impl PackOut {
                     let mut out_data = vec![];
                     copy(&mut data, &mut out_data).unwrap();
 
-                    // Basic, assume for now that all parts are in one pack file
                     if let Some(dat) = idx.get_mut(&hash) {
-                        dat.append(&mut out_data);
+                        dat.push((chunk, out_data));
                     } else {
-                        idx.insert(hash, out_data);
+                        idx.insert(hash, vec![(chunk, out_data)]);
                     }
                     state = Spo::FhdrEdat;
                 },
@@ -202,6 +201,34 @@ impl PackOut {
     }
 
     pub fn find(&self, hash: hash::Hash) -> Option<Vec<u8>> {
-        self.idx.get(&hash).map(|x| x.clone())
+        // TODO: if more than 1 chunk, bail? well can't know for sure here
+        // Might be better to move away from *this* particular api
+        // Basic, assume all chunk is in one packfile
+        // Assume all chunk is stored in sorted order in packfile
+        self.idx.get(&hash).map(|chunks| {
+            let mut ret = vec![];
+            for (_, dat) in chunks {
+                ret.extend_from_slice(&dat);
+            }
+            ret
+        })
+    }
+
+    pub fn find_chunk(&self, hash: hash::Hash, chunk: u16) -> Option<Vec<u8>> {
+        self.idx.get(&hash).and_then(
+            |chunks| chunks.into_iter().find(
+                |(vec_chunk, _)| *vec_chunk == chunk
+            ).map(
+                |(_, dat)| dat.clone()
+            )
+        )
+    }
+
+    pub fn list_chunks(&self, hash: hash::Hash) -> Option<Vec<u16>> {
+        self.idx.get(&hash).map(
+            |chunks| chunks.into_iter().map(
+                |(chunk, _)| *chunk
+            ).collect()
+        )
     }
 }
