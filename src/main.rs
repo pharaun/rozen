@@ -112,31 +112,43 @@ fn main() {
 
     // Dump the sqlite db data so we can view what it is
     println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");
-    index.walk_files(|path, perm, pack, hash| {
-        // For now bail if multi-pack + multi chunk hash
-        if pack.len() > 1 {
-            panic!("Too many packs involved");
-        }
-
-        let pack = &pack.into_iter().collect::<Vec<hash::Hash>>()[0];
+    index.walk_files(|path, perm, packs, hash| {
         println!("HASH: {:?}", hash);
-        println!("\tPACK: {:?}", pack);
 
-        // Find or load the packfile
-        if !pack_cache.contains_key(pack) {
-            println!("\t\tLoading: {:?}", pack);
+        // Iterate over the packfile to assemble the chunk data
+        let mut chunk_pack = vec![];
+        for pack in packs {
+            println!("\tPACK: {:?}", pack);
 
-            let mut pack_read = Backend::read(&mut backend, &pack).unwrap();
-            let pack_file = pack::PackOut::load(&mut pack_read, &key);
+            // Find or load the packfile
+            if !pack_cache.contains_key(&pack) {
+                println!("\t\tLoading: {:?}", pack);
 
-            pack_cache.insert(
-                pack.clone(),
-                pack_file,
-            );
+                let mut pack_read = Backend::read(&mut backend, &pack).unwrap();
+                let pack_file = pack::PackOut::load(&mut pack_read, &key);
+
+                pack_cache.insert(
+                    pack.clone(),
+                    pack_file,
+                );
+            }
+
+            for chunk in (pack_cache.get(&pack).unwrap()).list_chunks(hash.clone()).unwrap() {
+                chunk_pack.push((chunk, pack.clone()));
+            }
         }
 
-        // Read from the packfile
-        let data = pack_cache.get(&pack).unwrap().find(hash.clone()).unwrap();
+        // Sort the chunk_pack
+        chunk_pack.sort_by(|(ca, _), (cb, _)| ca.cmp(cb));
+
+        // TODO: make this into a streaming read but for now copy data
+        let mut data: Vec<u8> = vec![];
+
+        // Assume no gaps in chunks
+        for (chunk, pack) in chunk_pack {
+            let mut dat = pack_cache.get(&pack).unwrap().find_chunk(hash.clone(), chunk).unwrap();
+            data.append(&mut dat);
+        }
 
         // Process the data
         let mut dec = crypto::decrypt(&key, &data[..]).unwrap();

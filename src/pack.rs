@@ -200,20 +200,6 @@ impl PackOut {
         }
     }
 
-    pub fn find(&self, hash: hash::Hash) -> Option<Vec<u8>> {
-        // TODO: if more than 1 chunk, bail? well can't know for sure here
-        // Might be better to move away from *this* particular api
-        // Basic, assume all chunk is in one packfile
-        // Assume all chunk is stored in sorted order in packfile
-        self.idx.get(&hash).map(|chunks| {
-            let mut ret = vec![];
-            for (_, dat) in chunks {
-                ret.extend_from_slice(&dat);
-            }
-            ret
-        })
-    }
-
     pub fn find_chunk(&self, hash: hash::Hash, chunk: u16) -> Option<Vec<u8>> {
         self.idx.get(&hash).and_then(
             |chunks| chunks.into_iter().find(
