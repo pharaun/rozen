@@ -80,6 +80,10 @@ impl<W: Write> LtvcBuilder<W> {
         self.write(b"FIDX", &[])
     }
 
+    pub fn write_pidx(&mut self) -> Result<usize, Error> {
+        self.write(b"PIDX", &[])
+    }
+
     pub fn write_aend(&mut self, f_idx: usize) -> Result<usize, Error> {
         self.write(b"AEND", &(f_idx as u32).to_le_bytes())
     }

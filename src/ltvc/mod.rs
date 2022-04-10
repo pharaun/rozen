@@ -41,6 +41,7 @@
 //! | AHDR       | Archive Header    | The first chunk, holds archive wide metadata |
 //! | FHDR       | File Header       | Holds per-file metadata |
 //! | FIDX       | File Index        | Offset+length index of all files in the archive |
+//! | PIDX       | Pack Index        | File hash + Chunk map to Packfile ids |
 //! | EDAT       | Encrypted Data    | Encrypted blobs. `FIDX/FHDR` before defines the content |
 //! | ~~FSNP~~   | ~~File Snapshot~~ | Not Implemented |
 //! | AEND       | Archive Ending    | Terminates the archive begun by a `AHDR` |
@@ -75,6 +76,15 @@
 //! is specifically for holding the index of all of the file HMAC within this archive block. See:
 //! [`crate::pack::ChunkIdx`]. This is an optional chunk but is highly encouraged to support seeks in an
 //! archive block that contains more than 1 `FHDR`. This chunk must be followed by an `EDAT`
+//!
+//! There is currently no data held within the value field of this chunk.
+//!
+//! ## PIDX
+//!
+//! This is like `FIDX` chunk, except that its the tag for what kind of content is in the `EDAT`
+//! that follows. This is specifically for holding the mapping of all file hash + chunks ->
+//! packfile ids. This is to allow us to do lookup by hash+chunk and get which packfile it was
+//! stored in.
 //!
 //! There is currently no data held within the value field of this chunk.
 //!

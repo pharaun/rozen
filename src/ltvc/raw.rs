@@ -368,12 +368,14 @@ mod test_ltvc_raw_iterator {
     fn one_pseudofile() {
         let test_data_fhdr = vec![1, 2, 3, 4];
         let test_data_fidx = vec![5, 6, 7, 8];
+        let test_data_pidx = vec![9, 10, 11, 12];
 
         // Write to the stream
         let data = Cursor::new(Vec::new());
         let hash = test_hash();
         let mut edat1 = Cursor::new(test_data_fhdr.clone());
         let mut edat2 = Cursor::new(test_data_fidx.clone());
+        let mut edat3 = Cursor::new(test_data_pidx.clone());
         let mut builder = LtvcBuilder::new(data);
 
         builder.write_ahdr(0x01).unwrap();
@@ -381,6 +383,8 @@ mod test_ltvc_raw_iterator {
         builder.write_edat(&mut edat1).unwrap();
         builder.write_fidx().unwrap();
         builder.write_edat(&mut edat2).unwrap();
+        builder.write_pidx().unwrap();
+        builder.write_edat(&mut edat3).unwrap();
         builder.write_aend(910).unwrap();
 
         // Reset stream
@@ -427,6 +431,20 @@ mod test_ltvc_raw_iterator {
             LtvcEntryRaw {
                 typ: *b"EDAT",
                 data: test_data_fidx,
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"PIDX",
+                data: vec![],
+            },
+            reader.next().unwrap().unwrap()
+        );
+        assert_eq!(
+            LtvcEntryRaw {
+                typ: *b"EDAT",
+                data: test_data_pidx,
             },
             reader.next().unwrap().unwrap()
         );

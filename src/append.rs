@@ -11,6 +11,8 @@ use crate::pack::PackBuilder;
 use crate::pack;
 use crate::hash;
 use crate::chunk;
+use crate::mapper;
+use crate::mapper::MapBuilder;
 
 // TODO: can probs make the snapshot be strictly focused on snapshot concerns such as
 // - deciding what files needs to be stored in a snapshot
@@ -30,6 +32,12 @@ pub fn snapshot<B: Backend>(
 ) {
     let index = Index::new();
     let mut wpack = None;
+
+    let mut map = {
+        let map_id = mapper::generate_map_id();
+        let multiwrite = backend.write_multi(&map_id).unwrap();
+        MapBuilder::new(map_id, multiwrite)
+    };
 
     {
         for entry in walker {
@@ -84,7 +92,7 @@ pub fn snapshot<B: Backend>(
                                         part,
                                         &mut chunk
                                     ) {
-                                        wpack.take().unwrap().finalize(&key);
+                                        wpack.take().unwrap().finalize(&mut map, &key);
                                     }
                                 }
 
@@ -111,8 +119,11 @@ pub fn snapshot<B: Backend>(
 
         // Force an finalize if its not already finalized
         if wpack.is_some() {
-            wpack.take().unwrap().finalize(&key);
+            wpack.take().unwrap().finalize(&mut map, &key);
         }
+
+        // Finalize the mapper
+        map.finalize(&key);
 
         // Spool the sqlite file into the backend as index
         // TODO: update this to support the archive file format defined in pack.rs

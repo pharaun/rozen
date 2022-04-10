@@ -17,6 +17,7 @@ mod buf;
 mod hash;
 mod ltvc;
 mod chunk;
+mod mapper;
 use crate::index::Index;
 
 // Configuration
@@ -109,6 +110,9 @@ fn main() {
 
     // Cached packfile refs
     let mut pack_cache = HashMap::new();
+
+    // TODO: mapper load here + switch logic below to read from mapper, and then delete
+    // pack_id from index
 
     // Dump the sqlite db data so we can view what it is
     println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");

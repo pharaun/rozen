@@ -35,6 +35,7 @@ pub enum LtvcEntry<R: Read> {
         chunk: u16,
     },
     Fidx,
+    Pidx,
     Edat {
         data: EdatReader<R>,
     },
@@ -141,6 +142,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
 
                     },
                     b"FIDX" => Some(Ok(LtvcEntry::Fidx)),
+                    b"PIDX" => Some(Ok(LtvcEntry::Pidx)),
                     b"EDAT" => {
                         // TODO: If we skip first EDAT we will get second one with a reader
                         // over and over... So might be worth adding additional logic to see
@@ -251,6 +253,27 @@ mod test_ltvc_iterator {
 
         assert_eq!(
             LtvcEntry::Fidx,
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_pidx() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_pidx().unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReader::new(data);
+
+        assert_eq!(
+            LtvcEntry::Pidx,
             reader.next().unwrap().unwrap()
         );
         assert!(reader.next().is_none());
