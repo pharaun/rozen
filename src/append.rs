@@ -76,6 +76,15 @@ pub fn snapshot<B: Backend>(
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                 // Stream the data into the pack
+                                // TODO:
+                                //  1. compression complicates things for things below a certain
+                                //     size don't bother compressing?
+                                //  2. for things above a size try compressing
+                                //  3. See if i can't do fast bail out but would require
+                                //     spooling....
+                                //  4. If below certain size go ahead and pack it up
+                                //  5. if above certain size just send it as its own archive to
+                                //     backend
                                 let mut chunker = chunk::Chunk::new(&mut enc);
                                 let mut pack_id: HashSet<hash::Hash> = HashSet::new();
 
