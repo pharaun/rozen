@@ -42,6 +42,10 @@ pub struct Hash (blake3::Hash);
 
 // TODO: Should require a 'hash type' here so that we can know
 // the providence of the hash (file, blob, etc...)
+// 1. File - F type
+// 2. Index - I type
+// 3. Packfile - P Type
+// 4. Mapper - M Type
 pub fn hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
     let mut hash = blake3::Hasher::new_keyed(&key.0);
     copy(data, &mut hash)?;
