@@ -16,7 +16,6 @@ mod pack;
 mod buf;
 mod hash;
 mod ltvc;
-mod chunk;
 mod mapper;
 use crate::index::Index;
 

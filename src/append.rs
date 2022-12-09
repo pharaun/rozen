@@ -10,7 +10,6 @@ use crate::backend::Backend;
 use crate::pack::PackBuilder;
 use crate::pack;
 use crate::hash;
-use crate::chunk;
 use crate::mapper;
 use crate::mapper::MapBuilder;
 
@@ -73,7 +72,8 @@ pub fn snapshot<B: Backend>(
                                 let pack_id = cas.append(
                                     content_hash.clone(),
                                     &key,
-                                    &mut enc
+                                    &mut enc,
+                                    meta.len()
                                 );
 
                                 // Load file info into index
@@ -156,7 +156,6 @@ use std::io::Write;
 //      * Fetch sub-parts of the data stream (ranged get)
 //      * Fetch whole thing
 //      * Manage s3/glacier/deep-freeze lifecycle (adjecent system, not in backend directly)
-//
 pub struct ObjectStore<'a, B: Backend + 'a> {
     w_backend: &'a B,
 
@@ -179,7 +178,36 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         }
     }
 
-    pub fn append<R: Read>(&mut self, hash: hash::Hash, key: &crypto::Key, reader: &mut R) -> HashSet<hash::Hash> {
+    pub fn append<R: Read>(&mut self, hash: hash::Hash, key: &crypto::Key, reader: &mut R, size: u64) -> HashSet<hash::Hash> {
+        if size > (3 * 1024) {
+            self.append_big(hash, key, reader)
+        } else {
+            self.append_small(hash, key, reader)
+        }
+    }
+
+    pub fn append_big<R: Read>(&mut self, hash: hash::Hash, key: &crypto::Key, reader: &mut R) -> HashSet<hash::Hash> {
+        // This one focuses on reading in one single big file into its own packfile and uploading
+        // it as it is
+        let mut pack_id: HashSet<hash::Hash> = HashSet::new();
+        let mut t_pack = {
+            let pack_id = pack::generate_pack_id();
+            let multiwrite = self.w_backend.write_multi(&pack_id).unwrap();
+            PackBuilder::new(pack_id, multiwrite)
+        };
+        pack_id.insert(t_pack.id.clone());
+
+        t_pack.append(
+            hash.clone(),
+            0u16,
+            reader
+        );
+        t_pack.finalize(&mut self.w_map, &key);
+
+        pack_id
+    }
+
+    pub fn append_small<R: Read>(&mut self, hash: hash::Hash, key: &crypto::Key, reader: &mut R) -> HashSet<hash::Hash> {
         // Stream the data into the pack
         // TODO:
         //  1. compression complicates things for things below a certain
@@ -190,24 +218,21 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         //  4. If below certain size go ahead and pack it up
         //  5. if above certain size just send it as its own archive to
         //     backend
-        let mut chunker = chunk::Chunk::new(reader);
         let mut pack_id: HashSet<hash::Hash> = HashSet::new();
 
-        while let Some((mut chunk, part)) = chunker.next() {
-            let t_pack = self.w_pack.get_or_insert_with(|| {
-                let pack_id = pack::generate_pack_id();
-                let multiwrite = self.w_backend.write_multi(&pack_id).unwrap();
-                PackBuilder::new(pack_id, multiwrite)
-            });
-            pack_id.insert(t_pack.id.clone());
+        let t_pack = self.w_pack.get_or_insert_with(|| {
+            let pack_id = pack::generate_pack_id();
+            let multiwrite = self.w_backend.write_multi(&pack_id).unwrap();
+            PackBuilder::new(pack_id, multiwrite)
+        });
+        pack_id.insert(t_pack.id.clone());
 
-            if t_pack.append(
-                hash.clone(),
-                part,
-                &mut chunk
-            ) {
-                self.w_pack.take().unwrap().finalize(&mut self.w_map, &key);
-            }
+        if t_pack.append(
+            hash.clone(),
+            0u16,
+            reader
+        ) {
+            self.w_pack.take().unwrap().finalize(&mut self.w_map, &key);
         }
 
         pack_id
