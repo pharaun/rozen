@@ -199,7 +199,6 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
 
         t_pack.append(
             hash.clone(),
-            0u16,
             reader
         );
         t_pack.finalize(&mut self.w_map, &key);
@@ -229,7 +228,6 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
 
         if t_pack.append(
             hash.clone(),
-            0u16,
             reader
         ) {
             self.w_pack.take().unwrap().finalize(&mut self.w_map, &key);

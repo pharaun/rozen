@@ -26,7 +26,6 @@ pub struct MapBuilder<W: Write> {
 #[derive(Serialize, Deserialize, Debug)]
 struct PackIdx {
     hash: hash::Hash,
-    chunk: u16,
     pack: hash::Hash,
 }
 
@@ -45,10 +44,9 @@ impl<W: Write> MapBuilder<W> {
         mapper
     }
 
-    pub fn append(&mut self, hash: hash::Hash, chunk: u16, pack: hash::Hash) {
+    pub fn append(&mut self, hash: hash::Hash, pack: hash::Hash) {
         self.idx.push(PackIdx {
             hash,
-            chunk,
             pack,
         });
     }

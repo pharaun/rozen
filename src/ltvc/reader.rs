@@ -32,7 +32,6 @@ pub enum LtvcEntry<R: Read> {
     },
     Fhdr {
         hash: Hash,
-        chunk: u16,
     },
     Fidx,
     Pidx,
@@ -127,17 +126,15 @@ impl<R: Read> Iterator for LtvcReader<R> {
                     b"FHDR" => {
                         let len = entry.data.len();
 
-                        // Should be 32 bytes for hash + 2 for chunk
-                        if len != 34 {
-                            panic!("FHDR malformed HASH+CHUNK length");
+                        // Should be 32 bytes for hash
+                        if len != 32 {
+                            panic!("FHDR malformed HASH length");
                         }
-                        let hash: [u8; 32] = entry.data[..(len-2)].try_into().unwrap();
-                        let chunk = LittleEndian::read_u16(&entry.data[(len-2)..]);
+                        let hash: [u8; 32] = entry.data[..len].try_into().unwrap();
 
                         // Setup a EDAT reader
                         Some(Ok(LtvcEntry::Fhdr {
                             hash: Hash::from(hash),
-                            chunk: chunk,
                         }))
 
                     },
@@ -218,7 +215,7 @@ mod test_ltvc_iterator {
         let data = Cursor::new(Vec::new());
         let hash = test_hash();
         let mut builder = LtvcBuilder::new(data);
-        builder.write_fhdr(&hash, 0).unwrap();
+        builder.write_fhdr(&hash).unwrap();
 
         // Reset stream
         let mut data = builder.to_inner();
@@ -230,7 +227,6 @@ mod test_ltvc_iterator {
         assert_eq!(
             LtvcEntry::Fhdr {
                 hash: hash,
-                chunk: 0,
             },
             reader.next().unwrap().unwrap()
         );

@@ -147,7 +147,7 @@ mod test_ltvc_raw_iterator {
         let data = Cursor::new(Vec::new());
         let hash = test_hash();
         let mut builder = LtvcBuilder::new(data);
-        builder.write_fhdr(&hash, 5).unwrap();
+        builder.write_fhdr(&hash).unwrap();
 
         // Reset stream
         let mut data = builder.to_inner();
@@ -161,7 +161,6 @@ mod test_ltvc_raw_iterator {
                 typ: *b"FHDR",
                 data: {
                     let mut data = hash.as_bytes().to_vec();
-                    data.extend_from_slice(&(5 as u16).to_le_bytes());
                     data
                 },
             },
@@ -379,7 +378,7 @@ mod test_ltvc_raw_iterator {
         let mut builder = LtvcBuilder::new(data);
 
         builder.write_ahdr(0x01).unwrap();
-        builder.write_fhdr(&hash, 5).unwrap();
+        builder.write_fhdr(&hash).unwrap();
         builder.write_edat(&mut edat1).unwrap();
         builder.write_fidx().unwrap();
         builder.write_edat(&mut edat2).unwrap();
@@ -407,7 +406,6 @@ mod test_ltvc_raw_iterator {
                 typ: *b"FHDR",
                 data: {
                     let mut data = hash.as_bytes().to_vec();
-                    data.extend_from_slice(&(5 as u16).to_le_bytes());
                     data
                 },
             },

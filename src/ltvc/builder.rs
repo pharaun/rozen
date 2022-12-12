@@ -51,11 +51,10 @@ impl<W: Write> LtvcBuilder<W> {
         self.write(b"AHDR", &[version])
     }
 
-    pub fn write_fhdr(&mut self, hash: &Hash, chunk: u16) -> Result<usize, Error> {
+    pub fn write_fhdr(&mut self, hash: &Hash) -> Result<usize, Error> {
         self.write(b"FHDR", &{
             let mut data = vec![];
             data.extend_from_slice(hash.as_bytes());
-            data.extend_from_slice(&chunk.to_le_bytes());
             data
         }[..])
     }

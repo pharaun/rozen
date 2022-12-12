@@ -35,7 +35,6 @@ pub struct PackBuilder<W: Write> {
 struct ChunkIdx {
     start_idx: usize,
     length: usize,
-    chunk: u16,
     hash: hash::Hash,
 }
 
@@ -60,16 +59,15 @@ impl<W: Write> PackBuilder<W> {
         pack
     }
 
-    pub fn append<R: Read>(&mut self, hash: hash::Hash, chunk: u16, reader: &mut R) -> bool {
+    pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) -> bool {
         let f_idx = self.p_idx;
 
-        self.p_idx += self.inner.write_fhdr(&hash, chunk).unwrap();
+        self.p_idx += self.inner.write_fhdr(&hash).unwrap();
         self.p_idx += self.inner.write_edat(reader).unwrap();
 
         self.idx.push(ChunkIdx {
             start_idx: f_idx,
             length: self.p_idx - f_idx,
-            chunk: chunk,
             hash: hash,
         });
 
@@ -104,7 +102,6 @@ impl<W: Write> PackBuilder<W> {
         for i in self.idx {
             map.append(
                 i.hash,
-                i.chunk,
                 self.id.clone(),
             )
         }
@@ -116,7 +113,7 @@ impl<W: Write> PackBuilder<W> {
 // and then cache the idx+data then use that info to validate the fidx and aend
 // TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
 pub struct PackOut {
-    idx: HashMap<hash::Hash, Vec<(u16, Vec<u8>)>>,
+    idx: HashMap<hash::Hash, Vec<u8>>,
     _idx: Vec<ChunkIdx>,
 }
 
@@ -124,7 +121,7 @@ pub struct PackOut {
 enum Spo {
     Start,
     Ahdr,
-    Fhdr { hash: hash::Hash, chunk: u16 },
+    Fhdr { hash: hash::Hash },
     FhdrEdat,
     Fidx,
     FidxEdat,
@@ -134,7 +131,7 @@ enum Spo {
 impl PackOut {
     pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
         let mut ltvc = LtvcReader::new(reader);
-        let mut idx: HashMap<hash::Hash, Vec<(u16, Vec<u8>)>> = HashMap::new();
+        let mut idx: HashMap<hash::Hash, Vec<u8>> = HashMap::new();
         let mut chunk_idx: Vec<ChunkIdx> = vec![];
         let mut state = Spo::Start;
 
@@ -147,23 +144,19 @@ impl PackOut {
                 },
 
                 // Assert that Fhdr follows the Ahdr, FhdrEdat
-                (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash, chunk }))) |
-                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fhdr { hash, chunk }))) => {
+                (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash }))) |
+                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fhdr { hash }))) => {
                     println!("\t\t\tFhdr <hash>");
-                    state = Spo::Fhdr { hash, chunk };
+                    state = Spo::Fhdr { hash };
                 },
 
                 // Assert that Fhdr Edat follows the Fhdr
-                (Spo::Fhdr { hash, chunk }, Some(Ok(LtvcEntry::Edat { mut data }))) => {
-                    println!("\t\t\tFhdr Edat - {:?}", chunk);
+                (Spo::Fhdr { hash }, Some(Ok(LtvcEntry::Edat { mut data }))) => {
+                    println!("\t\t\tFhdr Edat");
                     let mut out_data = vec![];
                     copy(&mut data, &mut out_data).unwrap();
 
-                    if let Some(dat) = idx.get_mut(&hash) {
-                        dat.push((chunk, out_data));
-                    } else {
-                        idx.insert(hash, vec![(chunk, out_data)]);
-                    }
+                    idx.insert(hash, out_data);
                     state = Spo::FhdrEdat;
                 },
 
@@ -210,21 +203,7 @@ impl PackOut {
         }
     }
 
-    pub fn find_chunk(&self, hash: hash::Hash, chunk: u16) -> Option<Vec<u8>> {
-        self.idx.get(&hash).and_then(
-            |chunks| chunks.into_iter().find(
-                |(vec_chunk, _)| *vec_chunk == chunk
-            ).map(
-                |(_, dat)| dat.clone()
-            )
-        )
-    }
-
-    pub fn list_chunks(&self, hash: hash::Hash) -> Option<Vec<u16>> {
-        self.idx.get(&hash).map(
-            |chunks| chunks.into_iter().map(
-                |(chunk, _)| *chunk
-            ).collect()
-        )
+    pub fn find_hash(&self, hash: hash::Hash) -> Option<Vec<u8>> {
+        self.idx.get(&hash).map(|dat| dat.clone())
     }
 }

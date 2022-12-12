@@ -119,7 +119,6 @@ fn main() {
         println!("HASH: {:?}", hash);
 
         // Iterate over the packfile to assemble the chunk data
-        let mut chunk_pack = vec![];
         for pack in packs {
             println!("\tPACK: {:?}", pack);
 
@@ -134,35 +133,22 @@ fn main() {
                     pack.clone(),
                     pack_file,
                 );
-            }
 
-            for chunk in (pack_cache.get(&pack).unwrap()).list_chunks(hash.clone()).unwrap() {
-                chunk_pack.push((chunk, pack.clone()));
+                // TODO: make this into a streaming read but for now copy data
+                let data: Vec<u8> = pack_cache.get(&pack).unwrap().find_hash(hash.clone()).unwrap();
+
+                // Process the data
+                let mut dec = crypto::decrypt(&key, &data[..]).unwrap();
+                let mut und = Decoder::new(&mut dec).unwrap();
+                let content_hash = hash::hash(&key, &mut und).unwrap();
+
+                println!("\tPATH: {:?}", path);
+                println!("\tPERM: {:?}", perm);
+
+                let is_same = hash == content_hash;
+                println!("\tSAME: {:5}", is_same);
             }
         }
-
-        // Sort the chunk_pack
-        chunk_pack.sort_by(|(ca, _), (cb, _)| ca.cmp(cb));
-
-        // TODO: make this into a streaming read but for now copy data
-        let mut data: Vec<u8> = vec![];
-
-        // Assume no gaps in chunks
-        for (chunk, pack) in chunk_pack {
-            let mut dat = pack_cache.get(&pack).unwrap().find_chunk(hash.clone(), chunk).unwrap();
-            data.append(&mut dat);
-        }
-
-        // Process the data
-        let mut dec = crypto::decrypt(&key, &data[..]).unwrap();
-        let mut und = Decoder::new(&mut dec).unwrap();
-        let content_hash = hash::hash(&key, &mut und).unwrap();
-
-        println!("\tPATH: {:?}", path);
-        println!("\tPERM: {:?}", perm);
-
-        let is_same = hash == content_hash;
-        println!("\tSAME: {:5}", is_same);
     });
     index.close();
 }
