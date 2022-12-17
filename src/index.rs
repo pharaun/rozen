@@ -84,6 +84,12 @@ impl Index {
             "SELECT pack_hash FROM packfiles where content_hash = ?"
         ).unwrap();
 
+        // TODO: these could be a join to also get pack hash too...
+        // - do we want to have a sql module that handles loading/unloading sql db
+        // - then give indivual modules access to a table (ie CAS the pack_hash table?)
+        // - Probs can do a typeclass or something which does all of the support needed for sqlite
+        //      Then for each things (ie file index, and cas) they hook into that support system
+        //      it feels like
         let mut dump_stmt = self.conn.prepare_cached(
             "SELECT path, permission, content_hash FROM files"
         ).unwrap();
