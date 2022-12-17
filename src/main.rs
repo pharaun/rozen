@@ -115,39 +115,35 @@ fn main() {
 
     // Dump the sqlite db data so we can view what it is
     println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");
-    index.walk_files(|path, perm, packs, hash| {
+    index.walk_files(|path, perm, pack, hash| {
         println!("HASH: {:?}", hash);
+        println!("\tPACK: {:?}", pack);
 
-        // Iterate over the packfile to assemble the chunk data
-        for pack in packs {
-            println!("\tPACK: {:?}", pack);
+        // Find or load the packfile
+        if !pack_cache.contains_key(&pack) {
+            println!("\t\tLoading: {:?}", pack);
 
-            // Find or load the packfile
-            if !pack_cache.contains_key(&pack) {
-                println!("\t\tLoading: {:?}", pack);
+            let mut pack_read = Backend::read(&mut backend, &pack).unwrap();
+            let pack_file = pack::PackOut::load(&mut pack_read, &key);
 
-                let mut pack_read = Backend::read(&mut backend, &pack).unwrap();
-                let pack_file = pack::PackOut::load(&mut pack_read, &key);
+            pack_cache.insert(
+                pack.clone(),
+                pack_file,
+            );
 
-                pack_cache.insert(
-                    pack.clone(),
-                    pack_file,
-                );
+            // TODO: make this into a streaming read but for now copy data
+            let data: Vec<u8> = pack_cache.get(&pack).unwrap().find_hash(hash.clone()).unwrap();
 
-                // TODO: make this into a streaming read but for now copy data
-                let data: Vec<u8> = pack_cache.get(&pack).unwrap().find_hash(hash.clone()).unwrap();
+            // Process the data
+            let mut dec = crypto::decrypt(&key, &data[..]).unwrap();
+            let mut und = Decoder::new(&mut dec).unwrap();
+            let content_hash = hash::hash(&key, &mut und).unwrap();
 
-                // Process the data
-                let mut dec = crypto::decrypt(&key, &data[..]).unwrap();
-                let mut und = Decoder::new(&mut dec).unwrap();
-                let content_hash = hash::hash(&key, &mut und).unwrap();
+            println!("\tPATH: {:?}", path);
+            println!("\tPERM: {:?}", perm);
 
-                println!("\tPATH: {:?}", path);
-                println!("\tPERM: {:?}", perm);
-
-                let is_same = hash == content_hash;
-                println!("\tSAME: {:5}", is_same);
-            }
+            let is_same = hash == content_hash;
+            println!("\tSAME: {:5}", is_same);
         }
     });
     index.close();
