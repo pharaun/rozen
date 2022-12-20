@@ -3,7 +3,8 @@ use zstd::stream::read::Encoder;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::sql::IndexMap;
+use crate::sql::Index;
+use crate::sql::Map;
 use crate::crypto;
 use crate::backend::Backend;
 use crate::pack::PackBuilder;
@@ -26,7 +27,7 @@ pub fn snapshot<B: Backend>(
     datetime: OffsetDateTime,
     walker: ignore::Walk,
 ) {
-    let index = IndexMap::new();
+    let index = Index::new();
     let mut cas = ObjectStore::new(backend);
 
     {
@@ -66,8 +67,8 @@ pub fn snapshot<B: Backend>(
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                 // Stream the data into the CAS system
-                                let pack_id = cas.append(
-                                    content_hash.clone(),
+                                cas.append(
+                                    &content_hash,
                                     &key,
                                     &mut enc,
                                     meta.len()
@@ -81,7 +82,6 @@ pub fn snapshot<B: Backend>(
                                 // around in packfile after compaction
                                 index.insert_file(
                                     e.path(),
-                                    &pack_id,
                                     &content_hash
                                 );
                             } else {
@@ -95,11 +95,11 @@ pub fn snapshot<B: Backend>(
         }
 
         // Finalize the CAS
-        cas.finalize(&key);
+        cas.finalize(datetime, &key);
 
         // Spool the sqlite file into the backend as index
         // TODO: update this to support the archive file format defined in pack.rs
-        let (mut s_index, mut s_map) = index.unload();
+        let mut s_index = index.unload();
 
         let comp = Encoder::new(
             &mut s_index,
@@ -113,21 +113,6 @@ pub fn snapshot<B: Backend>(
         let dt_fmt = datetime.format(&Rfc3339).unwrap();
         let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
         println!("INDEX: {:?}", filename);
-        backend.write_filename(&filename, &mut enc).unwrap();
-
-        // Stream the map into backend
-        let comp = Encoder::new(
-            &mut s_map,
-            21
-        ).unwrap();
-
-        // Encrypt the stream
-        let mut enc = crypto::encrypt(&key, comp).unwrap();
-
-        // Stream the data into the backend
-        let dt_fmt = datetime.format(&Rfc3339).unwrap();
-        let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
-        println!("MAP: {:?}", filename);
         backend.write_filename(&filename, &mut enc).unwrap();
     }
 }
@@ -171,25 +156,30 @@ use std::io::Write;
 pub struct ObjectStore<'a, B: Backend + 'a> {
     w_backend: &'a B,
     w_pack: Option<PackBuilder<Box<dyn Write>>>,
+    map: Map,
 }
 
 impl<'a, B: Backend> ObjectStore<'a, B> {
     pub fn new(backend: &'a mut B) -> Self {
+        // TODO: later do something like fetch the latest cache and use that
         ObjectStore {
             w_backend: backend,
             w_pack: None,
+            map: Map::new(),
         }
     }
 
-    pub fn append<R: Read>(&mut self, hash: hash::Hash, key: &crypto::Key, reader: &mut R, size: u64) -> hash::Hash {
-        if size > (3 * 1024) {
-            self.append_big(hash, key, reader)
-        } else {
-            self.append_small(hash, key, reader)
-        }
+    pub fn append<R: Read>(&mut self, hash: &hash::Hash, key: &crypto::Key, reader: &mut R, size: u64) {
+        let pack_id = if size > (3 * 1024) {
+                self.append_big(hash, key, reader)
+            } else {
+                self.append_small(hash, key, reader)
+            };
+
+        self.map.insert_chunk(&hash, &pack_id);
     }
 
-    fn append_big<R: Read>(&mut self, hash: hash::Hash, key: &crypto::Key, reader: &mut R) -> hash::Hash {
+    fn append_big<R: Read>(&mut self, hash: &hash::Hash, key: &crypto::Key, reader: &mut R) -> hash::Hash {
         // This one focuses on reading in one single big file into its own packfile and uploading
         // it as it is
         let mut t_pack = {
@@ -209,7 +199,7 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         pack_id
     }
 
-    fn append_small<R: Read>(&mut self, hash: hash::Hash, key: &crypto::Key, reader: &mut R) -> hash::Hash {
+    fn append_small<R: Read>(&mut self, hash: &hash::Hash, key: &crypto::Key, reader: &mut R) -> hash::Hash {
         // Stream the data into the pack
         // TODO:
         //  1. compression complicates things for things below a certain
@@ -237,11 +227,29 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         pack_id
     }
 
-    pub fn finalize(mut self, key: &crypto::Key) {
+    pub fn finalize(mut self, datetime: OffsetDateTime, key: &crypto::Key) {
         // Force an finalize if its not already finalized
         if self.w_pack.is_some() {
             self.w_pack.take().unwrap().finalize(&key);
         }
+
+        let mut s_map = self.map.unload();
+
+        // Stream the map into backend
+        let comp = Encoder::new(
+            &mut s_map,
+            21
+        ).unwrap();
+
+        // Encrypt the stream
+        let mut enc = crypto::encrypt(&key, comp).unwrap();
+
+        // Stream the data into the backend
+        let dt_fmt = datetime.format(&Rfc3339).unwrap();
+        let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
+        println!("MAP: {:?}", filename);
+        self.w_backend.write_filename(&filename, &mut enc).unwrap();
+
     }
 
     // TODO:

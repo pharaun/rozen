@@ -16,7 +16,7 @@ mod buf;
 mod hash;
 mod ltvc;
 mod sql;
-use crate::sql::IndexMap;
+use crate::sql::walk_files;
 
 // Configuration
 // At a later time honor: https://aws.amazon.com/blogs/security/a-new-and-standardized-way-to-manage-credentials-in-the-aws-sdks/
@@ -112,15 +112,12 @@ fn main() {
     let mut m_dec = crypto::decrypt(&key, &mut map_content).unwrap();
     let mut m_und = Decoder::new(&mut m_dec).unwrap();
 
-    // Load index + map
-    let index = IndexMap::load(&mut i_und, &mut m_und);
-
     // Cached packfile refs
     let mut pack_cache = HashMap::new();
 
     // Dump the sqlite db data so we can view what it is
     println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");
-    index.walk_files(|path, perm, pack, hash| {
+    walk_files(&mut i_und, &mut m_und, |path, perm, pack, hash| {
         println!("HASH: {:?}", hash);
         println!("\tPACK: {:?}", pack);
 
@@ -151,5 +148,4 @@ fn main() {
             println!("\tSAME: {:5}", is_same);
         }
     });
-    index.close();
 }
