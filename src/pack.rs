@@ -10,7 +10,6 @@ use crate::crypto;
 use crate::hash;
 use crate::ltvc::builder::LtvcBuilder;
 use crate::ltvc::reader::{LtvcReader, LtvcEntry};
-use crate::mapper;
 
 // TODO: set to 1gb at some point
 const PACK_SIZE: usize = 4 * 1024;
@@ -80,7 +79,7 @@ impl<W: Write> PackBuilder<W> {
 
     // TODO: should hash+hmac various data bits in a packfile
     // Store the hmac hash of the packfile in packfile + snapshot itself.
-    pub fn finalize<MW: Write>(mut self, map: &mut mapper::MapBuilder<MW>, key: &crypto::Key) {
+    pub fn finalize(mut self, key: &crypto::Key) {
         let f_idx = self.p_idx;
 
         self.p_idx += self.inner.write_fidx().unwrap();
@@ -97,14 +96,6 @@ impl<W: Write> PackBuilder<W> {
 
         // Flush to signal to the backend that its done
         self.inner.to_inner().flush().unwrap();
-
-        // TODO: decide on what is a good ordering, but for now record the index data to the mapper
-        for i in self.idx {
-            map.append(
-                i.hash,
-                self.id.clone(),
-            )
-        }
     }
 }
 

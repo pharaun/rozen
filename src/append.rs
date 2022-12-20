@@ -3,14 +3,12 @@ use zstd::stream::read::Encoder;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::index::Index;
+use crate::sql::IndexMap;
 use crate::crypto;
 use crate::backend::Backend;
 use crate::pack::PackBuilder;
 use crate::pack;
 use crate::hash;
-use crate::mapper;
-use crate::mapper::MapBuilder;
 
 // TODO: can probs make the snapshot be strictly focused on snapshot concerns such as
 // - deciding what files needs to be stored in a snapshot
@@ -28,7 +26,7 @@ pub fn snapshot<B: Backend>(
     datetime: OffsetDateTime,
     walker: ignore::Walk,
 ) {
-    let index = Index::new();
+    let index = IndexMap::new();
     let mut cas = ObjectStore::new(backend);
 
     {
@@ -101,10 +99,10 @@ pub fn snapshot<B: Backend>(
 
         // Spool the sqlite file into the backend as index
         // TODO: update this to support the archive file format defined in pack.rs
-        let mut s_file = index.unload();
+        let (mut s_index, mut s_map) = index.unload();
 
         let comp = Encoder::new(
-            &mut s_file,
+            &mut s_index,
             21
         ).unwrap();
 
@@ -115,6 +113,21 @@ pub fn snapshot<B: Backend>(
         let dt_fmt = datetime.format(&Rfc3339).unwrap();
         let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
         println!("INDEX: {:?}", filename);
+        backend.write_filename(&filename, &mut enc).unwrap();
+
+        // Stream the map into backend
+        let comp = Encoder::new(
+            &mut s_map,
+            21
+        ).unwrap();
+
+        // Encrypt the stream
+        let mut enc = crypto::encrypt(&key, comp).unwrap();
+
+        // Stream the data into the backend
+        let dt_fmt = datetime.format(&Rfc3339).unwrap();
+        let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
+        println!("MAP: {:?}", filename);
         backend.write_filename(&filename, &mut enc).unwrap();
     }
 }
@@ -157,23 +170,14 @@ use std::io::Write;
 //      * Manage s3/glacier/deep-freeze lifecycle (adjecent system, not in backend directly)
 pub struct ObjectStore<'a, B: Backend + 'a> {
     w_backend: &'a B,
-
     w_pack: Option<PackBuilder<Box<dyn Write>>>,
-    w_map: MapBuilder<Box<dyn Write>>,
 }
 
 impl<'a, B: Backend> ObjectStore<'a, B> {
     pub fn new(backend: &'a mut B) -> Self {
-        let map = {
-            let map_id = mapper::generate_map_id();
-            let multiwrite = backend.write_multi(&map_id).unwrap();
-            MapBuilder::new(map_id, multiwrite)
-        };
-
         ObjectStore {
             w_backend: backend,
             w_pack: None,
-            w_map: map,
         }
     }
 
@@ -199,7 +203,8 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
             hash.clone(),
             reader
         );
-        t_pack.finalize(&mut self.w_map, &key);
+
+        t_pack.finalize(&key);
 
         pack_id
     }
@@ -226,7 +231,7 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
             hash.clone(),
             reader
         ) {
-            self.w_pack.take().unwrap().finalize(&mut self.w_map, &key);
+            self.w_pack.take().unwrap().finalize(&key);
         }
 
         pack_id
@@ -235,10 +240,8 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
     pub fn finalize(mut self, key: &crypto::Key) {
         // Force an finalize if its not already finalized
         if self.w_pack.is_some() {
-            self.w_pack.take().unwrap().finalize(&mut self.w_map, &key);
+            self.w_pack.take().unwrap().finalize(&key);
         }
-
-        self.w_map.finalize(&key);
     }
 
     // TODO:

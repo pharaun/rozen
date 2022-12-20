@@ -11,13 +11,12 @@ use crate::backend::Backend;
 
 mod crypto;
 mod append;
-mod index;
 mod pack;
 mod buf;
 mod hash;
 mod ltvc;
-mod mapper;
-use crate::index::Index;
+mod sql;
+use crate::sql::IndexMap;
 
 // Configuration
 // At a later time honor: https://aws.amazon.com/blogs/security/a-new-and-standardized-way-to-manage-credentials-in-the-aws-sdks/
@@ -99,19 +98,25 @@ fn main() {
             .build(),
     );
 
-    // Grab db out of backend and put it to a temp handle
+    // Indexer
     let dt_fmt = datetime.format(&Rfc3339).unwrap();
     let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
     let mut index_content = Backend::read_filename(&mut backend, &filename).unwrap();
-    let mut dec = crypto::decrypt(&key, &mut index_content).unwrap();
-    let mut und = Decoder::new(&mut dec).unwrap();
-    let index = Index::load(&mut und);
+    let mut i_dec = crypto::decrypt(&key, &mut index_content).unwrap();
+    let mut i_und = Decoder::new(&mut i_dec).unwrap();
+
+    // Mapper
+    let dt_fmt = datetime.format(&Rfc3339).unwrap();
+    let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
+    let mut map_content = Backend::read_filename(&mut backend, &filename).unwrap();
+    let mut m_dec = crypto::decrypt(&key, &mut map_content).unwrap();
+    let mut m_und = Decoder::new(&mut m_dec).unwrap();
+
+    // Load index + map
+    let index = IndexMap::load(&mut i_und, &mut m_und);
 
     // Cached packfile refs
     let mut pack_cache = HashMap::new();
-
-    // TODO: mapper load here + switch logic below to read from mapper, and then delete
-    // pack_id from index
 
     // Dump the sqlite db data so we can view what it is
     println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");
