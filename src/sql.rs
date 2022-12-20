@@ -2,17 +2,13 @@ use rusqlite as rs;
 
 use std::io::{copy, Read, Write};
 use std::path::Path;
-use serde::Serialize;
-use serde::Deserialize;
 use bincode;
 use zstd::stream::read::Encoder;
-use zstd::stream::read::Decoder;
 
 use rusqlite::Connection;
 use std::fs::File;
 
 use crate::ltvc::builder::LtvcBuilder;
-use crate::ltvc::reader::{LtvcReader, LtvcEntry};
 
 use crate::crypto;
 use crate::hash;
@@ -81,7 +77,7 @@ impl SqlDb {
         }
     }
 
-    fn unload(mut self) -> File {
+    fn unload(self) -> File {
         self.conn.close().unwrap();
         self.db_tmp.into_file()
     }
@@ -94,7 +90,7 @@ pub struct Index {
 
 impl Index {
     pub fn new() -> Self {
-        let mut db = SqlDb::new();
+        let db = SqlDb::new();
 
         db.conn.execute_batch(
             "CREATE TABLE files (
@@ -113,7 +109,7 @@ impl Index {
         }
     }
 
-    pub fn unload(mut self) -> File {
+    pub fn unload(self) -> File {
         self.db.unload()
     }
 
@@ -145,7 +141,7 @@ pub struct Map {
 
 impl Map {
     pub fn new() -> Self {
-        let mut db = SqlDb::new();
+        let db = SqlDb::new();
 
         db.conn.execute_batch(
             "CREATE TABLE packfiles (
@@ -163,7 +159,7 @@ impl Map {
         }
     }
 
-    pub fn unload(mut self) -> File {
+    pub fn unload(self) -> File {
         self.db.unload()
     }
 
@@ -194,10 +190,10 @@ where
     R: Read
 {
     // Load up the index db
-    let mut idx = Index::load(index).db;
+    let idx = Index::load(index).db;
     let map_file = {
         let m = Map::load(map).db;
-        m.conn.close();
+        let _ = m.conn.close();
         m.db_tmp
     };
     idx.attach(map_file.path(), "map");
@@ -225,7 +221,7 @@ where
 
     // Cleanup
     idx.detach("map");
-    idx.conn.close();
+    let _ = idx.conn.close();
 }
 
 

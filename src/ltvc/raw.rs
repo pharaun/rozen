@@ -160,7 +160,7 @@ mod test_ltvc_raw_iterator {
             LtvcEntryRaw {
                 typ: *b"FHDR",
                 data: {
-                    let mut data = hash.as_bytes().to_vec();
+                    let data = hash.as_bytes().to_vec();
                     data
                 },
             },
@@ -409,7 +409,7 @@ mod test_ltvc_raw_iterator {
             LtvcEntryRaw {
                 typ: *b"FHDR",
                 data: {
-                    let mut data = hash.as_bytes().to_vec();
+                    let data = hash.as_bytes().to_vec();
                     data
                 },
             },
