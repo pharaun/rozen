@@ -33,6 +33,7 @@ pub enum LtvcEntry<R: Read> {
     Fhdr {
         hash: Hash,
     },
+    Shdr,
     Fidx,
     Pidx,
     Edat {
@@ -138,6 +139,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         }))
 
                     },
+                    b"SHDR" => Some(Ok(LtvcEntry::Shdr)),
                     b"FIDX" => Some(Ok(LtvcEntry::Fidx)),
                     b"PIDX" => Some(Ok(LtvcEntry::Pidx)),
                     b"EDAT" => {
@@ -228,6 +230,27 @@ mod test_ltvc_iterator {
             LtvcEntry::Fhdr {
                 hash: hash,
             },
+            reader.next().unwrap().unwrap()
+        );
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn one_shdr() {
+        // Write to the stream
+        let data = Cursor::new(Vec::new());
+        let mut builder = LtvcBuilder::new(data);
+        builder.write_shdr().unwrap();
+
+        // Reset stream
+        let mut data = builder.to_inner();
+        data.seek(SeekFrom::Start(0)).unwrap();
+
+        // Read back and assert stuff
+        let mut reader = LtvcReader::new(data);
+
+        assert_eq!(
+            LtvcEntry::Shdr,
             reader.next().unwrap().unwrap()
         );
         assert!(reader.next().is_none());

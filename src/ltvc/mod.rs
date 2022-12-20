@@ -40,10 +40,10 @@
 //! | :--------: | ----------------- | ----------- |
 //! | AHDR       | Archive Header    | The first chunk, holds archive wide metadata |
 //! | FHDR       | File Header       | Holds per-file metadata |
+//! | SHDR       | Snapshot Header   | Holds snapshot metadata |
 //! | FIDX       | File Index        | Offset+length index of all files in the archive |
-//! | PIDX       | Pack Index        | File hash + Chunk map to Packfile ids |
+//! | PIDX       | Pack Index        | Chunk to Packfile index |
 //! | EDAT       | Encrypted Data    | Encrypted blobs. `FIDX/FHDR` before defines the content |
-//! | ~~FSNP~~   | ~~File Snapshot~~ | Not Implemented |
 //! | AEND       | Archive Ending    | Terminates the archive begun by a `AHDR` |
 //!
 //! ## AHDR
@@ -68,7 +68,14 @@
 //! | Type     | Name    | Description |
 //! | -------: | ------- | ----------- |
 //! | [u8; 32] | hash    | The keyed HMAC hash of the file content |
-//! | u16      | parts   | Starts at 0, a file can be split in more than 1 part |
+//!
+//! ## SHDR
+//!
+//! This is the chunk that defines what the `EDAT` that follows contains. This is specifically for
+//! snapshot data. Each snapshot's metadata is stored in the `EDAT` that follows this header.
+//! Similiar rules as `FHDR` itself.
+//!
+//! There is currently no data held within the value field of this chunk.
 //!
 //! ## FIDX
 //!
@@ -82,16 +89,15 @@
 //! ## PIDX
 //!
 //! This is like `FIDX` chunk, except that its the tag for what kind of content is in the `EDAT`
-//! that follows. This is specifically for holding the mapping of all file hash + chunks ->
-//! packfile ids. This is to allow us to do lookup by hash+chunk and get which packfile it was
-//! stored in.
+//! that follows. This is specifically for holding the mapping of all file hash -> packfile ids.
+//! This is to allow us to do lookup by hash+chunk and get which packfile it was stored in.
 //!
 //! There is currently no data held within the value field of this chunk.
 //!
 //! ## EDAT
 //!
-//! Encrypted data chunk. This must be preceeded by an `FHDR` or `FIDX` at this point in time. This
-//! contains the encrypted and compressed datastream.
+//! Encrypted data chunk. This must be preceeded by an; `FHDR`, `SHDR`, `FIDX`, or `PIDX`  at this
+//! point in time. This contains the encrypted and compressed datastream.
 //!
 //! There must be 1 or more chunk to hold the entire datastream. To support the streaming usecase
 //! the content of each `EDAT` is appended to the preceeding one. The LTVC reader is allowed to
@@ -102,10 +108,6 @@
 //! | Type    | Name    | Description |
 //! | ------: | ------- | ----------- |
 //! | [u8; N] | data    | The encrypted data chunk. See [`crate::crypto::Crypter<R, E>`] |
-//!
-//! ## ~~FSNP~~
-//!
-//! **Not Implemented**
 //!
 //! ## AEND
 //!

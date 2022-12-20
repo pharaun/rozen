@@ -59,6 +59,10 @@ impl<W: Write> LtvcBuilder<W> {
         }[..])
     }
 
+    pub fn write_shdr(&mut self) -> Result<usize, Error> {
+        self.write(b"SHDR", &[])
+    }
+
     // TODO: may be worth moving compression/encryption? to ensure that only
     // compressed+encrypted data arrives here, but also the management of those
     // might be better else where cos there might be multi-threading concerns
