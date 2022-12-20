@@ -84,10 +84,10 @@ impl Index {
         db.conn
             .execute_batch(
                 "CREATE TABLE files (
-                path VARCHAR NOT NULL,
-                permission INTEGER NOT NULL,
-                content_hash VARCHAR NOT NULL
-             );",
+                    path VARCHAR NOT NULL,
+                    permission INTEGER NOT NULL,
+                    content_hash VARCHAR NOT NULL
+                 );",
             )
             .unwrap();
 
@@ -111,9 +111,9 @@ impl Index {
             .conn
             .prepare_cached(
                 "INSERT INTO files
-             (path, permission, content_hash)
-             VALUES
-             (?, ?, ?)",
+                 (path, permission, content_hash)
+                 VALUES
+                 (?, ?, ?)",
             )
             .unwrap();
 
@@ -138,9 +138,9 @@ impl Map {
         db.conn
             .execute_batch(
                 "CREATE TABLE packfiles (
-                content_hash VARCHAR NOT NULL,
-                pack_hash VARCHAR NOT NULL
-            );",
+                    content_hash VARCHAR NOT NULL,
+                    pack_hash VARCHAR NOT NULL
+                );",
             )
             .unwrap();
 
@@ -164,9 +164,9 @@ impl Map {
             .conn
             .prepare_cached(
                 "INSERT INTO packfiles
-             (content_hash, pack_hash)
-             VALUES
-             (?, ?)",
+                 (content_hash, pack_hash)
+                 VALUES
+                 (?, ?)",
             )
             .unwrap();
 
@@ -196,10 +196,9 @@ where
             .conn
             .prepare_cached(
                 "SELECT f.path, f.permission, m.pack_hash, f.content_hash
-             FROM main.files f
-             INNER JOIN map.packfiles m ON
-                m.content_hash = f.content_hash;
-            ",
+                 FROM main.files f
+                 INNER JOIN map.packfiles m ON
+                    m.content_hash = f.content_hash;",
             )
             .unwrap();
         let mut rows = dump_stmt.query([]).unwrap();
