@@ -1,14 +1,14 @@
-use std::io::{Read, copy, Write};
-use std::mem;
-use std::error::Error;
-use tokio::runtime::Runtime;
-use aws_sdk_s3::Client;
-use aws_sdk_s3::Endpoint;
-use aws_sdk_s3::ByteStream;
 use aws_sdk_s3::model::CompletedMultipartUpload;
 use aws_sdk_s3::model::CompletedPart;
+use aws_sdk_s3::ByteStream;
+use aws_sdk_s3::Client;
+use aws_sdk_s3::Endpoint;
 use bytes::Buf;
 use http::Uri;
+use std::error::Error;
+use std::io::{copy, Read, Write};
+use std::mem;
+use tokio::runtime::Runtime;
 
 // Single threaded but we are on one thread here for now
 use std::rc::Rc;
@@ -16,7 +16,6 @@ use std::rc::Rc;
 use crate::backend::Backend;
 use crate::buf::flush_buf;
 use crate::hash;
-
 
 pub struct S3 {
     client: Rc<Client>,
@@ -39,19 +38,14 @@ impl S3 {
     }
 }
 
-
 impl Backend for S3 {
-    fn list_keys(&self) -> Result<Box<dyn Iterator<Item = String>>, String>{
-        let call = self.client.list_objects_v2().
-            bucket("test").
-            send();
+    fn list_keys(&self) -> Result<Box<dyn Iterator<Item = String>>, String> {
+        let call = self.client.list_objects_v2().bucket("test").send();
 
-        let res = self.rt.block_on(async {call.await}).unwrap();
+        let res = self.rt.block_on(async { call.await }).unwrap();
         let contents = res.contents.unwrap();
 
-        Ok(Box::new(
-            contents.into_iter().map(|x| x.key.unwrap())
-        ))
+        Ok(Box::new(contents.into_iter().map(|x| x.key.unwrap())))
     }
 
     // TODO: this and the multipart api needs to also do various checksums to pass on to s3
@@ -67,13 +61,15 @@ impl Backend for S3 {
 
         let stream = ByteStream::from(buf);
 
-        let call = self.client.put_object().
-            body(stream).
-            bucket("test").
-            key(filename).
-            send();
+        let call = self
+            .client
+            .put_object()
+            .body(stream)
+            .bucket("test")
+            .key(filename)
+            .send();
 
-        let _res = self.rt.block_on(async {call.await}).unwrap();
+        let _res = self.rt.block_on(async { call.await }).unwrap();
 
         Ok(())
     }
@@ -82,15 +78,12 @@ impl Backend for S3 {
     // verify its checksum and so on before returning it to the backup system?
     fn read_filename(&mut self, filename: &str) -> Result<Box<dyn Read>, String> {
         // Do s3 dance to fetch a object and buffer it locally
-        let call = self.client.get_object().
-            bucket("test").
-            key(filename).
-            send();
+        let call = self.client.get_object().bucket("test").key(filename).send();
 
-        let res = self.rt.block_on(async {call.await}).unwrap();
+        let res = self.rt.block_on(async { call.await }).unwrap();
 
         let body_call = res.body.collect();
-        let data = self.rt.block_on(async {body_call.await.unwrap()});
+        let data = self.rt.block_on(async { body_call.await.unwrap() });
         let mut data_read = data.reader();
 
         let mut buf = Vec::new();
@@ -104,12 +97,14 @@ impl Backend for S3 {
     }
 
     fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
-        let call = self.client.create_multipart_upload().
-            bucket("test").
-            key(&hash::to_hex(key)).
-            send();
+        let call = self
+            .client
+            .create_multipart_upload()
+            .bucket("test")
+            .key(&hash::to_hex(key))
+            .send();
 
-        let res = self.rt.block_on(async {call.await}).unwrap();
+        let res = self.rt.block_on(async { call.await }).unwrap();
 
         Ok(Box::new(S3Multi {
             client: self.client.clone(),
@@ -154,17 +149,20 @@ impl Write for S3Multi {
         // Finalaize the stream
         self.upload_part(true);
 
-        let call = self.client.complete_multipart_upload().
-            bucket("test").
-            key(hash::to_hex(&self.key)).
-            upload_id(self.id.clone()).
-            multipart_upload(
-                CompletedMultipartUpload::builder().
-                    set_parts(Some(self.part.clone())).
-                    build()
-            ).send();
+        let call = self
+            .client
+            .complete_multipart_upload()
+            .bucket("test")
+            .key(hash::to_hex(&self.key))
+            .upload_id(self.id.clone())
+            .multipart_upload(
+                CompletedMultipartUpload::builder()
+                    .set_parts(Some(self.part.clone()))
+                    .build(),
+            )
+            .send();
 
-        let _res = self.rt.block_on(async {call.await}).unwrap();
+        let _res = self.rt.block_on(async { call.await }).unwrap();
         Ok(())
     }
 }
@@ -174,7 +172,7 @@ impl S3Multi {
         println!("S3-multi-write: last: {:?}", last);
 
         // If last part to upload *or* at least 6mb accumulated upload
-        if (last && !self.t_buf.is_empty())|| self.t_buf.len() >= BUFFER_TARGET {
+        if (last && !self.t_buf.is_empty()) || self.t_buf.len() >= BUFFER_TARGET {
             println!("S3-multi-write: UPLOADING");
 
             // Swap the self.t_buf with a empty one and own it
@@ -182,22 +180,24 @@ impl S3Multi {
             mem::swap(&mut self.t_buf, &mut t_buf);
 
             let stream = ByteStream::from(t_buf);
-            let call = self.client.upload_part().
-                body(stream).
-                bucket("test").
-                key(hash::to_hex(&self.key)).
-                upload_id(self.id.clone()).
-                part_number(self.part_id).
-                send();
+            let call = self
+                .client
+                .upload_part()
+                .body(stream)
+                .bucket("test")
+                .key(hash::to_hex(&self.key))
+                .upload_id(self.id.clone())
+                .part_number(self.part_id)
+                .send();
 
-            let res = self.rt.block_on(async {call.await}).unwrap();
+            let res = self.rt.block_on(async { call.await }).unwrap();
 
             // Collect info to make a CompletePart to then record in finalize
             self.part.push(
-                CompletedPart::builder().
-                    e_tag(res.e_tag.unwrap()).
-                    part_number(self.part_id).
-                    build()
+                CompletedPart::builder()
+                    .e_tag(res.e_tag.unwrap())
+                    .part_number(self.part_id)
+                    .build(),
             );
 
             // Increment the part number, clear the buffer

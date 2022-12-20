@@ -1,7 +1,7 @@
-use std::io::Read;
 use std::fmt::Debug;
+use std::io::Read;
 
-use byteorder::{ReadBytesExt, LittleEndian};
+use byteorder::{LittleEndian, ReadBytesExt};
 use thiserror::Error;
 
 use crate::hash::Checksum;
@@ -36,9 +36,7 @@ pub struct LtvcEntryRaw {
 
 impl<R: Read> LtvcReaderRaw<R> {
     pub fn new(reader: R) -> Self {
-        LtvcReaderRaw {
-            inner: reader,
-        }
+        LtvcReaderRaw { inner: reader }
     }
 
     fn read_entry(&mut self) -> Result<LtvcEntryRaw, LtvcError> {
@@ -57,7 +55,7 @@ impl<R: Read> LtvcReaderRaw<R> {
 
             // Validate the header
             if (hash.finalize() as u16) != header_hash {
-                return Err(LtvcError::HeaderChecksumError)
+                return Err(LtvcError::HeaderChecksumError);
             }
 
             (len as usize, typ)
@@ -97,20 +95,19 @@ impl<R: Read> Iterator for LtvcReaderRaw<R> {
             // TODO: should be UnexpectedEof
             Err(LtvcError::IOError(_)) => None,
             Err(x) => Some(Err(x)),
-            Ok(x)  => Some(Ok(x)),
+            Ok(x) => Some(Ok(x)),
         }
     }
 }
 
-
 #[cfg(test)]
 mod test_ltvc_raw_iterator {
-    use std::io::{Cursor, SeekFrom, Seek};
+    use super::*;
     use crate::crypto;
     use crate::hash;
     use crate::ltvc::builder::LtvcBuilder;
     use crate::ltvc::CHUNK_SIZE;
-    use super::*;
+    use std::io::{Cursor, Seek, SeekFrom};
 
     fn test_hash() -> hash::Hash {
         let id = crypto::gen_key();

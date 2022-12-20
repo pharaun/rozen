@@ -1,23 +1,22 @@
-use std::io::{Read, copy};
-use std::fmt;
 use std::convert::TryInto;
+use std::fmt;
+use std::io::{copy, Read};
 
 use blake3;
 
-use twox_hash::XxHash32;
-use std::hash::Hasher as StdHasher;
-use std::hash::Hash as StdHash;
 use crate::crypto;
+use std::hash::Hash as StdHash;
+use std::hash::Hasher as StdHasher;
+use twox_hash::XxHash32;
 
-use serde::Serializer;
-use serde::Serialize;
-use serde::Deserializer;
+use serde::de::{self, Unexpected, Visitor};
 use serde::Deserialize;
-use serde::de::{self, Visitor, Unexpected};
-
+use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
 
 // Make the checksum api be similiar to blake3's
-pub struct Checksum (XxHash32);
+pub struct Checksum(XxHash32);
 
 impl Checksum {
     pub fn new() -> Checksum {
@@ -38,7 +37,7 @@ impl Checksum {
 
 // TODO: improve the blake hash wrap
 #[derive(PartialEq, Eq, Clone, Debug, StdHash)]
-pub struct Hash (blake3::Hash);
+pub struct Hash(blake3::Hash);
 
 // TODO: Should require a 'hash type' here so that we can know
 // the providence of the hash (file, blob, etc...)
@@ -73,7 +72,6 @@ impl Hash {
     }
 }
 
-
 // Serde impls
 impl Serialize for Hash {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -103,7 +101,7 @@ impl<'de> Visitor<'de> for HashVisitor {
     fn visit_byte_buf<E: de::Error>(self, v: Vec<u8>) -> Result<Self::Value, E> {
         v.try_into().map_or_else(
             |v: Vec<u8>| Err(de::Error::invalid_value(Unexpected::Bytes(&v), &self)),
-            |hash_bytes: [u8; 32]| Ok(Hash::from(hash_bytes))
+            |hash_bytes: [u8; 32]| Ok(Hash::from(hash_bytes)),
         )
     }
 }

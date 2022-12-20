@@ -8,16 +8,16 @@ use std::fmt;
 #[cfg(test)]
 use std::fmt::Debug;
 
-use byteorder::{LittleEndian, ByteOrder};
+use byteorder::{ByteOrder, LittleEndian};
 
 // Single threaded but we are on one thread here for now
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
-use crate::hash::Hash;
 use crate::buf::flush_buf;
-use crate::ltvc::raw::LtvcReaderRaw;
+use crate::hash::Hash;
 use crate::ltvc::raw::LtvcError;
+use crate::ltvc::raw::LtvcReaderRaw;
 
 pub struct LtvcReader<R: Read> {
     inner: Rc<RefCell<Peekable<LtvcReaderRaw<R>>>>,
@@ -27,21 +27,13 @@ pub struct LtvcReader<R: Read> {
 // to force the stream to skip to the next non-edat chunk
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum LtvcEntry<R: Read> {
-    Ahdr {
-        version: u8,
-    },
-    Fhdr {
-        hash: Hash,
-    },
+    Ahdr { version: u8 },
+    Fhdr { hash: Hash },
     Shdr,
     Fidx,
     Pidx,
-    Edat {
-        data: EdatReader<R>,
-    },
-    Aend {
-        idx: usize,
-    }
+    Edat { data: EdatReader<R> },
+    Aend { idx: usize },
 }
 
 pub struct EdatReader<R: Read> {
@@ -60,9 +52,9 @@ impl<R: Read> PartialEq for EdatReader<R> {
 impl<R: Read> Debug for EdatReader<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Point")
-         .field("inner", &"LtvcReaderRaw Iter".to_string())
-         .field("out_buf", &"Output Buffer".to_string())
-         .finish()
+            .field("inner", &"LtvcReaderRaw Iter".to_string())
+            .field("out_buf", &"Output Buffer".to_string())
+            .finish()
     }
 }
 
@@ -98,9 +90,7 @@ impl<R: Read> Read for EdatReader<R> {
 impl<R: Read> LtvcReader<R> {
     pub fn new(reader: R) -> Self {
         LtvcReader {
-            inner: Rc::new(RefCell::new(
-                LtvcReaderRaw::new(reader).peekable()
-            )),
+            inner: Rc::new(RefCell::new(LtvcReaderRaw::new(reader).peekable())),
         }
     }
 }
@@ -111,8 +101,8 @@ impl<R: Read> Iterator for LtvcReader<R> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut inner = self.inner.borrow_mut();
         match inner.next() {
-            None            => None,
-            Some(Err(x))    => Some(Err(x)),
+            None => None,
+            Some(Err(x)) => Some(Err(x)),
             Some(Ok(entry)) => {
                 match &entry.typ {
                     b"AHDR" => {
@@ -123,7 +113,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         Some(Ok(LtvcEntry::Ahdr {
                             version: entry.data[0],
                         }))
-                    },
+                    }
                     b"FHDR" => {
                         let len = entry.data.len();
 
@@ -137,8 +127,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         Some(Ok(LtvcEntry::Fhdr {
                             hash: Hash::from(hash),
                         }))
-
-                    },
+                    }
                     b"SHDR" => Some(Ok(LtvcEntry::Shdr)),
                     b"FIDX" => Some(Ok(LtvcEntry::Fidx)),
                     b"PIDX" => Some(Ok(LtvcEntry::Pidx)),
@@ -154,9 +143,9 @@ impl<R: Read> Iterator for LtvcReader<R> {
                                 inner: self.inner.clone(),
                                 // Preseed it with *THIS* edat's data
                                 out_buf: entry.data,
-                            }
+                            },
                         }))
-                    },
+                    }
                     b"AEND" => {
                         if entry.data.len() != 4 {
                             panic!("AEND isn't only version");
@@ -164,24 +153,22 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         Some(Ok(LtvcEntry::Aend {
                             idx: LittleEndian::read_u32(&entry.data) as usize,
                         }))
-                    },
-                    x       => panic!("Didn't support: {:?}", from_utf8(x)),
+                    }
+                    x => panic!("Didn't support: {:?}", from_utf8(x)),
                 }
-            },
+            }
         }
     }
 }
 
-
-
 #[cfg(test)]
 mod test_ltvc_iterator {
-    use std::io::{Cursor, SeekFrom, Seek, copy};
+    use super::*;
     use crate::crypto;
     use crate::hash;
     use crate::ltvc::builder::LtvcBuilder;
     use crate::ltvc::CHUNK_SIZE;
-    use super::*;
+    use std::io::{copy, Cursor, Seek, SeekFrom};
 
     fn test_hash() -> hash::Hash {
         let id = crypto::gen_key();
@@ -203,9 +190,7 @@ mod test_ltvc_iterator {
         let mut reader = LtvcReader::new(data);
 
         assert_eq!(
-            LtvcEntry::Ahdr {
-                version: 0x01,
-            },
+            LtvcEntry::Ahdr { version: 0x01 },
             reader.next().unwrap().unwrap()
         );
         assert!(reader.next().is_none());
@@ -227,9 +212,7 @@ mod test_ltvc_iterator {
         let mut reader = LtvcReader::new(data);
 
         assert_eq!(
-            LtvcEntry::Fhdr {
-                hash: hash,
-            },
+            LtvcEntry::Fhdr { hash: hash },
             reader.next().unwrap().unwrap()
         );
         assert!(reader.next().is_none());
@@ -249,10 +232,7 @@ mod test_ltvc_iterator {
         // Read back and assert stuff
         let mut reader = LtvcReader::new(data);
 
-        assert_eq!(
-            LtvcEntry::Shdr,
-            reader.next().unwrap().unwrap()
-        );
+        assert_eq!(LtvcEntry::Shdr, reader.next().unwrap().unwrap());
         assert!(reader.next().is_none());
     }
 
@@ -270,10 +250,7 @@ mod test_ltvc_iterator {
         // Read back and assert stuff
         let mut reader = LtvcReader::new(data);
 
-        assert_eq!(
-            LtvcEntry::Fidx,
-            reader.next().unwrap().unwrap()
-        );
+        assert_eq!(LtvcEntry::Fidx, reader.next().unwrap().unwrap());
         assert!(reader.next().is_none());
     }
 
@@ -291,10 +268,7 @@ mod test_ltvc_iterator {
         // Read back and assert stuff
         let mut reader = LtvcReader::new(data);
 
-        assert_eq!(
-            LtvcEntry::Pidx,
-            reader.next().unwrap().unwrap()
-        );
+        assert_eq!(LtvcEntry::Pidx, reader.next().unwrap().unwrap());
         assert!(reader.next().is_none());
     }
 
@@ -313,9 +287,7 @@ mod test_ltvc_iterator {
         let mut reader = LtvcReader::new(data);
 
         assert_eq!(
-            LtvcEntry::Aend {
-                idx: 12345
-            },
+            LtvcEntry::Aend { idx: 12345 },
             reader.next().unwrap().unwrap()
         );
         assert!(reader.next().is_none());
@@ -355,7 +327,7 @@ mod test_ltvc_iterator {
         match edatreader {
             LtvcEntry::Edat { data: mut x } => {
                 let _ = copy(&mut x, &mut new_data);
-            },
+            }
             _ => panic!("Invalid data in test"),
         }
         assert_eq!(new_data, test_data);
@@ -397,7 +369,7 @@ mod test_ltvc_iterator {
         match edatreader {
             LtvcEntry::Edat { data: mut x } => {
                 let _ = copy(&mut x, &mut new_data);
-            },
+            }
             _ => panic!("Invalid data in test"),
         }
         assert_eq!(new_data, test_data);
@@ -439,7 +411,7 @@ mod test_ltvc_iterator {
         match edatreader {
             LtvcEntry::Edat { data: mut x } => {
                 let _ = copy(&mut x, &mut new_data);
-            },
+            }
             _ => panic!("Invalid data in test"),
         }
         assert_eq!(new_data, test_data);

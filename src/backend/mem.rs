@@ -1,14 +1,14 @@
+use iter_read::IterRead;
 use rusqlite as rs;
 use rusqlite::Connection;
-use iter_read::IterRead;
-use std::io::{Read, Write, Cursor};
+use std::io::{Cursor, Read, Write};
 
 // Single threaded but we are on one thread here for now
 use std::rc::Rc;
 
 use crate::backend::Backend;
-use crate::hash;
 use crate::buf::fill_buf;
+use crate::hash;
 
 const CHUNK_SIZE: usize = 1 * 1024;
 
@@ -19,7 +19,7 @@ pub struct MemoryVFS {
 impl MemoryVFS {
     pub fn new(filename: Option<&str>) -> Self {
         let conn = match filename {
-            None    => Connection::open_in_memory().unwrap(),
+            None => Connection::open_in_memory().unwrap(),
             Some(f) => Connection::open(f).unwrap(),
         };
 
@@ -32,50 +32,56 @@ impl MemoryVFS {
                 content BLOB NOT NULL,
                 UNIQUE(key, chunk)
              );
-             COMMIT;"
-        ).unwrap();
+             COMMIT;",
+        )
+        .unwrap();
 
         MemoryVFS {
-            conn: Rc::new(conn)
+            conn: Rc::new(conn),
         }
     }
 }
 
 impl Backend for MemoryVFS {
-    fn list_keys(&self) -> Result<Box<dyn Iterator<Item = String>>, String>{
+    fn list_keys(&self) -> Result<Box<dyn Iterator<Item = String>>, String> {
         let mut stmt = self.conn.prepare("SELECT DISTINCT key FROM blob").unwrap();
-        Ok(Box::new(stmt.query_map([], |row| {
+        Ok(Box::new(
+            stmt.query_map([], |row| {
                 let x: String = row.get(0).unwrap();
                 Ok(x)
-            }).unwrap().map(|item| {
-                item.unwrap()
-            }).collect::<Vec<String>>().into_iter()
+            })
+            .unwrap()
+            .map(|item| item.unwrap())
+            .collect::<Vec<String>>()
+            .into_iter(),
         ))
     }
 
     fn write_filename<R: Read>(&self, filename: &str, reader: R) -> Result<(), String> {
-        write_filename(
-            self.conn.clone(),
-            filename,
-            reader
-        )
+        write_filename(self.conn.clone(), filename, reader)
     }
 
     fn read_filename(&mut self, filename: &str) -> Result<Box<dyn Read>, String> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT content
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT content
              FROM blob
              WHERE key = ?
-             ORDER BY chunk ASC"
-        ).unwrap();
+             ORDER BY chunk ASC",
+            )
+            .unwrap();
 
         Ok(Box::new(IterRead::new(
             stmt.query_map(rs::params![filename], |row| {
                 let x: Vec<u8> = row.get(0).unwrap();
                 Ok(x)
-            }).unwrap().map(|item| {
-                item.unwrap()
-            }).flatten().collect::<Vec<u8>>().into_iter()
+            })
+            .unwrap()
+            .map(|item| item.unwrap())
+            .flatten()
+            .collect::<Vec<u8>>()
+            .into_iter(),
         )))
     }
 
@@ -103,20 +109,21 @@ impl Write for VFSWrite {
     // TODO: not sure if this is proper use of flush or if we should have a finalize call instead
     fn flush(&mut self) -> Result<(), std::io::Error> {
         let data = Cursor::new(self.t_buf.clone());
-        write_filename(
-            self.conn.clone(),
-            &hash::to_hex(&self.key),
-            data
-        ).unwrap();
+        write_filename(self.conn.clone(), &hash::to_hex(&self.key), data).unwrap();
         Ok(())
     }
 }
 
-fn write_filename<R: Read>(conn: Rc<Connection>, filename: &str, mut reader: R) -> Result<(), String> {
+fn write_filename<R: Read>(
+    conn: Rc<Connection>,
+    filename: &str,
+    mut reader: R,
+) -> Result<(), String> {
     // Delete any key chunks that exists before
-    conn.prepare_cached(
-        "DELETE FROM blob WHERE key = ?"
-    ).unwrap().execute(rs::params![filename]).unwrap();
+    conn.prepare_cached("DELETE FROM blob WHERE key = ?")
+        .unwrap()
+        .execute(rs::params![filename])
+        .unwrap();
 
     // Insert new data
     let mut chunk_idx: i64 = 0;
@@ -125,33 +132,32 @@ fn write_filename<R: Read>(conn: Rc<Connection>, filename: &str, mut reader: R) 
         let mut in_buf = [0u8; CHUNK_SIZE];
         match fill_buf(&mut reader, &mut in_buf).unwrap() {
             (true, 0) => break,
-            (_, len)  => {
+            (_, len) => {
                 // Write a new chunk to the db
-                let mut file_stmt = conn.prepare_cached(
-                    "INSERT INTO blob
+                let mut file_stmt = conn
+                    .prepare_cached(
+                        "INSERT INTO blob
                      (key, chunk, content)
                      VALUES
-                     (?, ?, ?)"
-                ).unwrap();
+                     (?, ?, ?)",
+                    )
+                    .unwrap();
 
-                file_stmt.execute(rs::params![
-                    filename,
-                    chunk_idx,
-                    &in_buf[..len],
-                ]).unwrap();
+                file_stmt
+                    .execute(rs::params![filename, chunk_idx, &in_buf[..len],])
+                    .unwrap();
 
                 chunk_idx += 1;
-            },
+            }
         }
     }
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
-    use crate::backend::mem::MemoryVFS;
     use crate::backend::mem::Backend;
+    use crate::backend::mem::MemoryVFS;
     use std::io::Cursor;
 
     #[test]
@@ -164,8 +170,10 @@ mod tests {
         back.write_filename(key, b).unwrap();
 
         let mut val = String::new();
-        back.read_filename(key).unwrap()
-            .read_to_string(&mut val).unwrap();
+        back.read_filename(key)
+            .unwrap()
+            .read_to_string(&mut val)
+            .unwrap();
 
         assert_eq!(val, "Test Data");
     }
@@ -184,8 +192,10 @@ mod tests {
         back.write_filename(key, b).unwrap();
 
         let mut val = String::new();
-        back.read_filename(key).unwrap()
-            .read_to_string(&mut val).unwrap();
+        back.read_filename(key)
+            .unwrap()
+            .read_to_string(&mut val)
+            .unwrap();
 
         assert_eq!(val, "Data Test");
     }

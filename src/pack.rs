@@ -1,15 +1,15 @@
-use std::io::{copy, Read, Write};
-use std::collections::HashMap;
-use serde::Serialize;
-use serde::Deserialize;
 use bincode;
-use zstd::stream::read::Encoder;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::HashMap;
+use std::io::{copy, Read, Write};
 use zstd::stream::read::Decoder;
+use zstd::stream::read::Encoder;
 
 use crate::crypto;
 use crate::hash;
 use crate::ltvc::builder::LtvcBuilder;
-use crate::ltvc::reader::{LtvcReader, LtvcEntry};
+use crate::ltvc::reader::{LtvcEntry, LtvcReader};
 
 // TODO: set to 1gb at some point
 const PACK_SIZE: usize = 4 * 1024;
@@ -50,7 +50,7 @@ impl<W: Write> PackBuilder<W> {
             id,
             idx: Vec::new(),
             inner: LtvcBuilder::new(writer),
-            p_idx: 0
+            p_idx: 0,
         };
 
         // Start with the Archive Header (kinda serves as a magic bits)
@@ -85,10 +85,7 @@ impl<W: Write> PackBuilder<W> {
         self.p_idx += self.inner.write_fidx().unwrap();
 
         let index = bincode::serialize(&self.idx).unwrap();
-        let comp = Encoder::new(
-            &index[..],
-            21
-        ).unwrap();
+        let comp = Encoder::new(&index[..], 21).unwrap();
         let mut enc = crypto::encrypt(&key, comp).unwrap();
 
         self.p_idx += self.inner.write_edat(&mut enc).unwrap();
@@ -98,7 +95,6 @@ impl<W: Write> PackBuilder<W> {
         self.inner.to_inner().flush().unwrap();
     }
 }
-
 
 // TODO: for now have this PackOut be a streaming validating pack reader, it stream reads
 // and then cache the idx+data then use that info to validate the fidx and aend
@@ -132,14 +128,14 @@ impl PackOut {
                 (Spo::Start, Some(Ok(LtvcEntry::Ahdr { version }))) if version == 0x01 => {
                     println!("\t\t\tAHDR 0x01");
                     state = Spo::Ahdr;
-                },
+                }
 
                 // Assert that Fhdr follows the Ahdr, FhdrEdat
-                (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash }))) |
-                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fhdr { hash }))) => {
+                (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash })))
+                | (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fhdr { hash }))) => {
                     println!("\t\t\tFhdr <hash>");
                     state = Spo::Fhdr { hash };
-                },
+                }
 
                 // Assert that Fhdr Edat follows the Fhdr
                 (Spo::Fhdr { hash }, Some(Ok(LtvcEntry::Edat { mut data }))) => {
@@ -149,13 +145,13 @@ impl PackOut {
 
                     idx.insert(hash, out_data);
                     state = Spo::FhdrEdat;
-                },
+                }
 
                 // Assert that Fidx follows FhdrEdat
                 (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fidx))) => {
                     println!("\t\t\tFidx");
                     state = Spo::Fidx;
-                },
+                }
 
                 // Assert that Fidx Edat follows Fidx
                 (Spo::Fidx, Some(Ok(LtvcEntry::Edat { mut data }))) => {
@@ -169,22 +165,22 @@ impl PackOut {
                     chunk_idx = bincode::deserialize(&idx_buf).unwrap();
                     println!("\t\t\t\tChunk len: {:?}", chunk_idx.len());
                     state = Spo::FidxEdat;
-                },
+                }
 
                 // Assert that Aend follows FidxEdat
                 (Spo::FidxEdat, Some(Ok(LtvcEntry::Aend { idx: _ }))) => {
                     println!("\t\t\tAend");
                     state = Spo::Aend;
-                },
+                }
 
                 // Asserts that the iterator is terminated
                 (Spo::Aend, None) => break,
 
                 // Unhandled states
                 // TODO: improve debuggability
-                (s, None)         => panic!("In state: {:?} unexpected end of iterator", s),
+                (s, None) => panic!("In state: {:?} unexpected end of iterator", s),
                 (s, Some(Err(_))) => panic!("In state: {:?} error on iterator", s),
-                (s, Some(Ok(_)))  => panic!("In state: {:?} unknown LtvcEntry", s),
+                (s, Some(Ok(_))) => panic!("In state: {:?} unknown LtvcEntry", s),
             }
         }
 

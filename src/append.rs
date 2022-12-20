@@ -1,15 +1,15 @@
 use std::io::{Seek, SeekFrom};
-use zstd::stream::read::Encoder;
-use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
+use zstd::stream::read::Encoder;
 
+use crate::backend::Backend;
+use crate::crypto;
+use crate::hash;
+use crate::pack;
+use crate::pack::PackBuilder;
 use crate::sql::Index;
 use crate::sql::Map;
-use crate::crypto;
-use crate::backend::Backend;
-use crate::pack::PackBuilder;
-use crate::pack;
-use crate::hash;
 
 // TODO: can probs make the snapshot be strictly focused on snapshot concerns such as
 // - deciding what files needs to be stored in a snapshot
@@ -46,10 +46,7 @@ pub fn snapshot<B: Backend>(
                                 let mut file_data = std::fs::File::open(e.path()).unwrap();
 
                                 // Hasher
-                                let content_hash = hash::hash(
-                                    &key,
-                                    &mut file_data
-                                ).unwrap();
+                                let content_hash = hash::hash(&key, &mut file_data).unwrap();
 
                                 // TODO: need to make sure that each stage always calls
                                 // some form of finalize on its into_inner reader object
@@ -58,21 +55,13 @@ pub fn snapshot<B: Backend>(
                                 // Streaming compressor
                                 file_data.seek(SeekFrom::Start(0)).unwrap();
 
-                                let comp = Encoder::new(
-                                    &mut file_data,
-                                    21
-                                ).unwrap();
+                                let comp = Encoder::new(&mut file_data, 21).unwrap();
 
                                 // Encrypt the stream
                                 let mut enc = crypto::encrypt(&key, comp).unwrap();
 
                                 // Stream the data into the CAS system
-                                cas.append(
-                                    &content_hash,
-                                    &key,
-                                    &mut enc,
-                                    meta.len()
-                                );
+                                cas.append(&content_hash, &key, &mut enc, meta.len());
 
                                 // Load file info into index
                                 // Snapshot will be '<packfile-id>:<hash-id>' to pull out
@@ -80,16 +69,13 @@ pub fn snapshot<B: Backend>(
                                 //  list of <packfile-id> with <hash-id>s
                                 // TODO: better to just store content-id because it can be moved
                                 // around in packfile after compaction
-                                index.insert_file(
-                                    e.path(),
-                                    &content_hash
-                                );
+                                index.insert_file(e.path(), &content_hash);
                             } else {
                                 println!("SKIP: {}", e.path().display());
                             }
-                        },
+                        }
                     }
-                },
+                }
                 Err(e) => println!("ERRR: {:?}", e),
             }
         }
@@ -101,10 +87,7 @@ pub fn snapshot<B: Backend>(
         // TODO: update this to support the archive file format defined in pack.rs
         let mut s_index = index.unload();
 
-        let comp = Encoder::new(
-            &mut s_index,
-            21
-        ).unwrap();
+        let comp = Encoder::new(&mut s_index, 21).unwrap();
 
         // Encrypt the stream
         let mut enc = crypto::encrypt(&key, comp).unwrap();
@@ -116,7 +99,6 @@ pub fn snapshot<B: Backend>(
         backend.write_filename(&filename, &mut enc).unwrap();
     }
 }
-
 
 use std::io::Read;
 use std::io::Write;
@@ -169,17 +151,28 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         }
     }
 
-    pub fn append<R: Read>(&mut self, hash: &hash::Hash, key: &crypto::Key, reader: &mut R, size: u64) {
+    pub fn append<R: Read>(
+        &mut self,
+        hash: &hash::Hash,
+        key: &crypto::Key,
+        reader: &mut R,
+        size: u64,
+    ) {
         let pack_id = if size > (3 * 1024) {
-                self.append_big(hash, key, reader)
-            } else {
-                self.append_small(hash, key, reader)
-            };
+            self.append_big(hash, key, reader)
+        } else {
+            self.append_small(hash, key, reader)
+        };
 
         self.map.insert_chunk(&hash, &pack_id);
     }
 
-    fn append_big<R: Read>(&mut self, hash: &hash::Hash, key: &crypto::Key, reader: &mut R) -> hash::Hash {
+    fn append_big<R: Read>(
+        &mut self,
+        hash: &hash::Hash,
+        key: &crypto::Key,
+        reader: &mut R,
+    ) -> hash::Hash {
         // This one focuses on reading in one single big file into its own packfile and uploading
         // it as it is
         let mut t_pack = {
@@ -189,17 +182,19 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         };
         let pack_id = t_pack.id.clone();
 
-        t_pack.append(
-            hash.clone(),
-            reader
-        );
+        t_pack.append(hash.clone(), reader);
 
         t_pack.finalize(&key);
 
         pack_id
     }
 
-    fn append_small<R: Read>(&mut self, hash: &hash::Hash, key: &crypto::Key, reader: &mut R) -> hash::Hash {
+    fn append_small<R: Read>(
+        &mut self,
+        hash: &hash::Hash,
+        key: &crypto::Key,
+        reader: &mut R,
+    ) -> hash::Hash {
         // Stream the data into the pack
         // TODO:
         //  1. compression complicates things for things below a certain
@@ -217,10 +212,7 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         });
         let pack_id = t_pack.id.clone();
 
-        if t_pack.append(
-            hash.clone(),
-            reader
-        ) {
+        if t_pack.append(hash.clone(), reader) {
             self.w_pack.take().unwrap().finalize(&key);
         }
 
@@ -236,10 +228,7 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         let mut s_map = self.map.unload();
 
         // Stream the map into backend
-        let comp = Encoder::new(
-            &mut s_map,
-            21
-        ).unwrap();
+        let comp = Encoder::new(&mut s_map, 21).unwrap();
 
         // Encrypt the stream
         let mut enc = crypto::encrypt(&key, comp).unwrap();
@@ -249,7 +238,6 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
         println!("MAP: {:?}", filename);
         self.w_backend.write_filename(&filename, &mut enc).unwrap();
-
     }
 
     // TODO:

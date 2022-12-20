@@ -127,8 +127,8 @@
 //! **TODO**: Need to decide how to handle archive block without a `FIDX`. The pointer might be
 //! set to `0x00_00_00_00`
 pub mod builder;
-pub mod reader;
 mod raw;
+pub mod reader;
 
 // 1Kb EDAT frame buffer
 // TODO: to force ourself to handle sequence of EDAT for now use small

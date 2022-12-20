@@ -3,16 +3,15 @@ use std::io::Read;
 use thiserror::Error;
 
 use sodiumoxide::crypto::secretstream;
-use sodiumoxide::crypto::secretstream::{Stream, Tag, Push, Header, ABYTES, Pull};
+use sodiumoxide::crypto::secretstream::{Header, Pull, Push, Stream, Tag, ABYTES};
 
-pub use sodiumoxide::crypto::secretstream::Key as Key;
+pub use sodiumoxide::crypto::secretstream::Key;
 
-use crate::buf::flush_buf;
 use crate::buf::fill_buf;
+use crate::buf::flush_buf;
 
 // 8Kb encryption frame buffer
 const CHUNK_SIZE: usize = 8 * 1024;
-
 
 #[derive(Error, Debug)]
 pub enum CryptoError {
@@ -113,7 +112,8 @@ impl<R: Read, E: Engine> Read for Crypter<R, E> {
             &mut self.engine,
             &mut self.in_buf,
             buf,
-        ).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        )
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 }
 
@@ -128,7 +128,9 @@ pub struct DecEngine(Stream<Pull>);
 
 impl Engine for EncEngine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> CResult<()> {
-        self.0.push_to_vec(data, None, tag, out).map_err(|_| CryptoError::EncryptionError)
+        self.0
+            .push_to_vec(data, None, tag, out)
+            .map_err(|_| CryptoError::EncryptionError)
     }
 
     fn is_finalized(&self) -> bool {
@@ -138,11 +140,16 @@ impl Engine for EncEngine {
 
 impl Engine for DecEngine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> CResult<()> {
-        self.0.pull_to_vec(data, None, out).map_err(
-            |_| CryptoError::DecryptionError
-        ).and_then(
-            |dtag| if dtag == tag { Ok(()) } else { Err(CryptoError::DecryptionError) }
-        )
+        self.0
+            .pull_to_vec(data, None, out)
+            .map_err(|_| CryptoError::DecryptionError)
+            .and_then(|dtag| {
+                if dtag == tag {
+                    Ok(())
+                } else {
+                    Err(CryptoError::DecryptionError)
+                }
+            })
     }
 
     fn is_finalized(&self) -> bool {
@@ -157,7 +164,7 @@ fn crypt_read<R: Read, E: Engine>(
     out_buf: &mut Vec<u8>,
     engine: &mut E,
     in_buf: &mut [u8],
-    buf: &mut [u8]
+    buf: &mut [u8],
 ) -> CResult<usize> {
     let mut buf_write: usize = 0;
 
@@ -166,18 +173,13 @@ fn crypt_read<R: Read, E: Engine>(
         if !out_buf.is_empty() {
             // 2. If data in out_buf, flush into buf first
             buf_write += flush_buf(out_buf, &mut buf[buf_write..]);
-
         } else {
             // 3. Read till there is 8Kb of data in in_buf
             match fill_buf(data, in_buf)? {
                 // 4a. Nothing left in in_buf, is EoF, and is not finalize, finalize
                 (true, 0) if !engine.is_finalized() => {
-                    engine.crypt(
-                        &[],
-                        Tag::Final,
-                        out_buf,
-                    )?;
-                },
+                    engine.crypt(&[], Tag::Final, out_buf)?;
+                }
 
                 // 4b. Nothing left in [in_buf, out_buf] and is EoF, exit
                 (true, 0) if out_buf.is_empty() => return Ok(buf_write),
@@ -187,23 +189,18 @@ fn crypt_read<R: Read, E: Engine>(
                 (eof, in_len) => {
                     let tag = if eof { Tag::Final } else { Tag::Message };
 
-                    engine.crypt(
-                        &in_buf[..in_len],
-                        tag,
-                        out_buf,
-                    )?;
-                },
+                    engine.crypt(&in_buf[..in_len], tag, out_buf)?;
+                }
             }
         }
     }
     Ok(buf_write)
 }
 
-
 #[cfg(test)]
 mod test_encrypt_decrypt_roundtrip {
-    use std::io::{copy, Cursor, Write};
     use super::*;
+    use std::io::{copy, Cursor, Write};
 
     #[test]
     fn small_data_roundtrip() {
@@ -286,8 +283,8 @@ mod test_encrypt_decrypt_roundtrip {
 
 #[cfg(test)]
 mod test_crypt_read {
-    use std::io::{Cursor, Write};
     use super::*;
+    use std::io::{Cursor, Write};
 
     // Struct just for copying data
     struct CopyEngine();
@@ -434,7 +431,17 @@ mod test_crypt_read {
 
         let mut engine = CopyEngine();
         let mut in_buf = [0u8; CHUNK_SIZE];
-        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 0);
+        assert_eq!(
+            crypt_read(
+                &mut in_data,
+                &mut out_buf,
+                &mut engine,
+                &mut in_buf,
+                &mut buf
+            )
+            .unwrap(),
+            0
+        );
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[0, 0, 0, 0]);
     }
@@ -447,7 +454,17 @@ mod test_crypt_read {
 
         let mut engine = CopyEngine();
         let mut in_buf = [0u8; CHUNK_SIZE];
-        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 2);
+        assert_eq!(
+            crypt_read(
+                &mut in_data,
+                &mut out_buf,
+                &mut engine,
+                &mut in_buf,
+                &mut buf
+            )
+            .unwrap(),
+            2
+        );
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[1, 2, 0, 0]);
     }
@@ -460,7 +477,17 @@ mod test_crypt_read {
 
         let mut engine = CopyEngine();
         let mut in_buf = [0u8; CHUNK_SIZE];
-        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
+        assert_eq!(
+            crypt_read(
+                &mut in_data,
+                &mut out_buf,
+                &mut engine,
+                &mut in_buf,
+                &mut buf
+            )
+            .unwrap(),
+            4
+        );
         assert_eq!(&out_buf[..], &[5, 6]);
         assert_eq!(&buf, &[1, 2, 3, 4]);
     }
@@ -473,7 +500,17 @@ mod test_crypt_read {
 
         let mut engine = CopyEngine();
         let mut in_buf = [0u8; CHUNK_SIZE];
-        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 2);
+        assert_eq!(
+            crypt_read(
+                &mut in_data,
+                &mut out_buf,
+                &mut engine,
+                &mut in_buf,
+                &mut buf
+            )
+            .unwrap(),
+            2
+        );
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[1, 2, 0, 0]);
     }
@@ -486,7 +523,17 @@ mod test_crypt_read {
 
         let mut engine = CopyEngine();
         let mut in_buf = [0u8; CHUNK_SIZE];
-        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
+        assert_eq!(
+            crypt_read(
+                &mut in_data,
+                &mut out_buf,
+                &mut engine,
+                &mut in_buf,
+                &mut buf
+            )
+            .unwrap(),
+            4
+        );
         assert_eq!(&out_buf[..], &[]);
         assert_eq!(&buf, &[3, 4, 1, 2]);
     }
@@ -499,7 +546,17 @@ mod test_crypt_read {
 
         let mut engine = CopyEngine();
         let mut in_buf = [0u8; CHUNK_SIZE];
-        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
+        assert_eq!(
+            crypt_read(
+                &mut in_data,
+                &mut out_buf,
+                &mut engine,
+                &mut in_buf,
+                &mut buf
+            )
+            .unwrap(),
+            4
+        );
         assert_eq!(&out_buf[..], &[7, 8]);
         assert_eq!(&buf, &[3, 4, 5, 6]);
     }
@@ -512,7 +569,17 @@ mod test_crypt_read {
 
         let mut engine = CopyEngine();
         let mut in_buf = [0u8; CHUNK_SIZE];
-        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
+        assert_eq!(
+            crypt_read(
+                &mut in_data,
+                &mut out_buf,
+                &mut engine,
+                &mut in_buf,
+                &mut buf
+            )
+            .unwrap(),
+            4
+        );
         assert_eq!(&out_buf[..], &[5, 6]);
         assert_eq!(&buf, &[1, 2, 3, 4]);
     }
@@ -525,7 +592,17 @@ mod test_crypt_read {
 
         let mut engine = CopyEngine();
         let mut in_buf = [0u8; CHUNK_SIZE];
-        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
+        assert_eq!(
+            crypt_read(
+                &mut in_data,
+                &mut out_buf,
+                &mut engine,
+                &mut in_buf,
+                &mut buf
+            )
+            .unwrap(),
+            4
+        );
         assert_eq!(&out_buf[..], &[3, 4, 5, 6]);
         assert_eq!(&buf, &[7, 8, 1, 2]);
     }
@@ -538,7 +615,17 @@ mod test_crypt_read {
 
         let mut engine = CopyEngine();
         let mut in_buf = [0u8; CHUNK_SIZE];
-        assert_eq!(crypt_read(&mut in_data, &mut out_buf, &mut engine, &mut in_buf, &mut buf).unwrap(), 4);
+        assert_eq!(
+            crypt_read(
+                &mut in_data,
+                &mut out_buf,
+                &mut engine,
+                &mut in_buf,
+                &mut buf
+            )
+            .unwrap(),
+            4
+        );
         assert_eq!(&out_buf[..], &[11, 12]);
         assert_eq!(&buf, &[7, 8, 9, 10]);
     }

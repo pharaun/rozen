@@ -1,13 +1,13 @@
-use std::io::Read;
 use std::cmp;
+use std::io::Read;
 
 pub fn fill_buf<R: Read>(data: &mut R, buf: &mut [u8]) -> std::io::Result<(bool, usize)> {
     let mut buf_read = 0;
 
     while buf_read < buf.len() {
         match data.read(&mut buf[buf_read..]) {
-            Ok(0)  => return Ok((true, buf_read)),
-            Ok(x)  => buf_read += x,
+            Ok(0) => return Ok((true, buf_read)),
+            Ok(x) => buf_read += x,
             Err(e) => return Err(e),
         };
     }
@@ -25,11 +25,10 @@ pub fn flush_buf(in_buf: &mut Vec<u8>, buf: &mut [u8]) -> usize {
     split_at
 }
 
-
 #[cfg(test)]
 mod test_fill_buf {
-    use std::io::Cursor;
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn big_buf_small_vec() {

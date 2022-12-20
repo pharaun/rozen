@@ -14,15 +14,10 @@ pub trait Backend {
 
     // Api for reading/Writing hashes to the backend
     fn write<R: Read>(&self, key: &hash::Hash, reader: R) -> Result<(), String> {
-        self.write_filename(
-            &hash::to_hex(key),
-            reader
-        )
+        self.write_filename(&hash::to_hex(key), reader)
     }
     fn read(&mut self, key: &hash::Hash) -> Result<Box<dyn Read>, String> {
-        self.read_filename(
-            &hash::to_hex(key),
-        )
+        self.read_filename(&hash::to_hex(key))
     }
 
     // Write Multipart, give a write handle and it will handle the streaming

@@ -1,20 +1,20 @@
 use ignore::WalkBuilder;
 
-use zstd::stream::read::Decoder;
 use serde::Deserialize;
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 use std::collections::HashMap;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
+use zstd::stream::read::Decoder;
 
 mod backend;
 use crate::backend::Backend;
 
-mod crypto;
 mod append;
-mod pack;
 mod buf;
+mod crypto;
 mod hash;
 mod ltvc;
+mod pack;
 mod sql;
 use crate::sql::walk_files;
 
@@ -50,7 +50,8 @@ fn main() {
     // TODO: bad news, should have separate key, one for encryption, and one for hmac
     let key = crypto::gen_key();
 
-    let config: Config = toml::from_str(r#"
+    let config: Config = toml::from_str(
+        r#"
         symlink = true
         same_fs = true
 
@@ -59,14 +60,16 @@ fn main() {
             exclude = ["*.pyc"]
             type = "AppendOnly"
 
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     println!("CONFIG:");
     println!("{:?}", config);
 
-    let target  = config.sources.get(0).unwrap().include.get(0).unwrap();
+    let target = config.sources.get(0).unwrap().include.get(0).unwrap();
     let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
-    let _stype  = config.sources.get(0).unwrap().source_type;
+    let _stype = config.sources.get(0).unwrap().source_type;
 
     // In memory backend for data storage
     //let mut backend = backend::mem::MemoryVFS::new(Some("test.sqlite"));
@@ -128,13 +131,14 @@ fn main() {
             let mut pack_read = Backend::read(&mut backend, &pack).unwrap();
             let pack_file = pack::PackOut::load(&mut pack_read, &key);
 
-            pack_cache.insert(
-                pack.clone(),
-                pack_file,
-            );
+            pack_cache.insert(pack.clone(), pack_file);
 
             // TODO: make this into a streaming read but for now copy data
-            let data: Vec<u8> = pack_cache.get(&pack).unwrap().find_hash(hash.clone()).unwrap();
+            let data: Vec<u8> = pack_cache
+                .get(&pack)
+                .unwrap()
+                .find_hash(hash.clone())
+                .unwrap();
 
             // Process the data
             let mut dec = crypto::decrypt(&key, &data[..]).unwrap();

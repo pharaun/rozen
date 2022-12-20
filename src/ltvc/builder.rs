@@ -1,8 +1,8 @@
 use std::io::{Error, Read, Write};
 
+use crate::buf::fill_buf;
 use crate::hash::Checksum;
 use crate::hash::Hash;
-use crate::buf::fill_buf;
 use crate::ltvc::CHUNK_SIZE;
 
 pub struct LtvcBuilder<W: Write> {
@@ -12,9 +12,7 @@ pub struct LtvcBuilder<W: Write> {
 // This is the high level writer interface
 impl<W: Write> LtvcBuilder<W> {
     pub fn new(writer: W) -> Self {
-        LtvcBuilder {
-            inner: writer,
-        }
+        LtvcBuilder { inner: writer }
     }
 
     pub fn to_inner(self) -> W {
@@ -52,11 +50,14 @@ impl<W: Write> LtvcBuilder<W> {
     }
 
     pub fn write_fhdr(&mut self, hash: &Hash) -> Result<usize, Error> {
-        self.write(b"FHDR", &{
-            let mut data = vec![];
-            data.extend_from_slice(hash.as_bytes());
-            data
-        }[..])
+        self.write(
+            b"FHDR",
+            &{
+                let mut data = vec![];
+                data.extend_from_slice(hash.as_bytes());
+                data
+            }[..],
+        )
     }
 
     pub fn write_shdr(&mut self) -> Result<usize, Error> {
@@ -73,7 +74,7 @@ impl<W: Write> LtvcBuilder<W> {
         loop {
             match fill_buf(reader, &mut in_buf)? {
                 (true, 0) => break,
-                (_, len)  => r_len += self.write(b"EDAT", &in_buf[..len])?,
+                (_, len) => r_len += self.write(b"EDAT", &in_buf[..len])?,
             }
         }
         Ok(r_len)
