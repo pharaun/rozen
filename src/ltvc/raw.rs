@@ -10,13 +10,13 @@ use crate::ltvc::MAX_CHUNK_SIZE;
 #[derive(Error, Debug)]
 pub enum LtvcError {
     #[error(transparent)]
-    IOError(#[from] std::io::Error),
+    IO(#[from] std::io::Error),
     #[error("permitted max chunk size exceeded")]
-    MaxLengthError,
+    MaxLength,
     #[error("checksum failed")]
-    ChecksumError,
+    DataChecksum,
     #[error("header checksum failed")]
-    HeaderChecksumError,
+    HeaderChecksum,
 }
 
 pub struct LtvcReaderRaw<R: Read> {
@@ -24,7 +24,7 @@ pub struct LtvcReaderRaw<R: Read> {
 }
 
 // This only returns valid entry, invalid will be an Error string
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct LtvcEntryRaw {
     // TODO: consider the merit of 4 bytes type? with 4 flag value in future
     // versus 1x 8byte type + 8byte flag field.
@@ -55,14 +55,14 @@ impl<R: Read> LtvcReaderRaw<R> {
 
             // Validate the header
             if (hash.finalize() as u16) != header_hash {
-                return Err(LtvcError::HeaderChecksumError);
+                return Err(LtvcError::HeaderChecksum);
             }
 
             (len as usize, typ)
         };
 
         if len > MAX_CHUNK_SIZE {
-            return Err(LtvcError::MaxLengthError);
+            return Err(LtvcError::MaxLength);
         }
 
         let data = {
@@ -77,11 +77,11 @@ impl<R: Read> LtvcReaderRaw<R> {
 
         if hash.finalize() == entry_hash {
             Ok(LtvcEntryRaw {
-                typ: typ,
-                data: data,
+                typ,
+                data,
             })
         } else {
-            Err(LtvcError::ChecksumError)
+            Err(LtvcError::DataChecksum)
         }
     }
 }
@@ -90,10 +90,10 @@ impl<R: Read> Iterator for LtvcReaderRaw<R> {
     type Item = Result<LtvcEntryRaw, LtvcError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // For now if IOError is recieved, assume stream is done and return None
+        // For now if LtvcError::IO is recieved, assume stream is done and return None
         match self.read_entry() {
             // TODO: should be UnexpectedEof
-            Err(LtvcError::IOError(_)) => None,
+            Err(LtvcError::IO(_)) => None,
             Err(x) => Some(Err(x)),
             Ok(x) => Some(Ok(x)),
         }
@@ -122,7 +122,7 @@ mod test_ltvc_raw_iterator {
         builder.write_ahdr(0x01).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -147,7 +147,7 @@ mod test_ltvc_raw_iterator {
         builder.write_fhdr(&hash).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -174,7 +174,7 @@ mod test_ltvc_raw_iterator {
         builder.write_fidx().unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -198,7 +198,7 @@ mod test_ltvc_raw_iterator {
         builder.write_aend(12345).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -224,7 +224,7 @@ mod test_ltvc_raw_iterator {
         builder.write_edat(&mut edat).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -256,7 +256,7 @@ mod test_ltvc_raw_iterator {
         builder.write_edat(&mut edat).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -295,7 +295,7 @@ mod test_ltvc_raw_iterator {
         builder.write_edat(&mut edat).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -334,7 +334,7 @@ mod test_ltvc_raw_iterator {
         builder.write_edat(&mut edat).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -388,7 +388,7 @@ mod test_ltvc_raw_iterator {
         builder.write_aend(910).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff

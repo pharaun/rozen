@@ -1,4 +1,3 @@
-use bincode;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -67,14 +66,10 @@ impl<W: Write> PackBuilder<W> {
         self.idx.push(ChunkIdx {
             start_idx: f_idx,
             length: self.p_idx - f_idx,
-            hash: hash,
+            hash,
         });
 
-        if self.p_idx >= PACK_SIZE {
-            true
-        } else {
-            false
-        }
+        self.p_idx >= PACK_SIZE
     }
 
     // TODO: should hash+hmac various data bits in a packfile
@@ -86,13 +81,13 @@ impl<W: Write> PackBuilder<W> {
 
         let index = bincode::serialize(&self.idx).unwrap();
         let comp = Encoder::new(&index[..], 21).unwrap();
-        let mut enc = crypto::encrypt(&key, comp).unwrap();
+        let mut enc = crypto::encrypt(key, comp).unwrap();
 
         self.p_idx += self.inner.write_edat(&mut enc).unwrap();
         self.p_idx += self.inner.write_aend(f_idx).unwrap();
 
         // Flush to signal to the backend that its done
-        self.inner.to_inner().flush().unwrap();
+        self.inner.into_inner().flush().unwrap();
     }
 }
 
@@ -157,7 +152,7 @@ impl PackOut {
                 (Spo::Fidx, Some(Ok(LtvcEntry::Edat { mut data }))) => {
                     println!("\t\t\tFidx Edat");
                     let mut idx_buf: Vec<u8> = Vec::new();
-                    let mut dec = crypto::decrypt(&key, &mut data).unwrap();
+                    let mut dec = crypto::decrypt(key, &mut data).unwrap();
                     let mut und = Decoder::new(&mut dec).unwrap();
                     copy(&mut und, &mut idx_buf).unwrap();
 
@@ -185,12 +180,12 @@ impl PackOut {
         }
 
         PackOut {
-            idx: idx,
+            idx,
             _idx: chunk_idx,
         }
     }
 
     pub fn find_hash(&self, hash: hash::Hash) -> Option<Vec<u8>> {
-        self.idx.get(&hash).map(|dat| dat.clone())
+        self.idx.get(&hash).cloned()
     }
 }

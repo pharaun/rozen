@@ -10,6 +10,7 @@ use crate::backend::Backend;
 use crate::buf::fill_buf;
 use crate::hash;
 
+#[allow(clippy::identity_op)]
 const CHUNK_SIZE: usize = 1 * 1024;
 
 pub struct MemoryVFS {
@@ -78,8 +79,7 @@ impl Backend for MemoryVFS {
                 Ok(x)
             })
             .unwrap()
-            .map(|item| item.unwrap())
-            .flatten()
+            .flat_map(|item| item.unwrap())
             .collect::<Vec<u8>>()
             .into_iter(),
         )))

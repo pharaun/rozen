@@ -46,7 +46,7 @@ pub fn snapshot<B: Backend>(
                                 let mut file_data = std::fs::File::open(e.path()).unwrap();
 
                                 // Hasher
-                                let content_hash = hash::hash(&key, &mut file_data).unwrap();
+                                let content_hash = hash::hash(key, &mut file_data).unwrap();
 
                                 // TODO: need to make sure that each stage always calls
                                 // some form of finalize on its into_inner reader object
@@ -58,10 +58,10 @@ pub fn snapshot<B: Backend>(
                                 let comp = Encoder::new(&mut file_data, 21).unwrap();
 
                                 // Encrypt the stream
-                                let mut enc = crypto::encrypt(&key, comp).unwrap();
+                                let mut enc = crypto::encrypt(key, comp).unwrap();
 
                                 // Stream the data into the CAS system
-                                cas.append(&content_hash, &key, &mut enc, meta.len());
+                                cas.append(&content_hash, key, &mut enc, meta.len());
 
                                 // Load file info into index
                                 // Snapshot will be '<packfile-id>:<hash-id>' to pull out
@@ -81,7 +81,7 @@ pub fn snapshot<B: Backend>(
         }
 
         // Finalize the CAS
-        cas.finalize(datetime, &key);
+        cas.finalize(datetime, key);
 
         // Spool the sqlite file into the backend as index
         // TODO: update this to support the archive file format defined in pack.rs
@@ -90,7 +90,7 @@ pub fn snapshot<B: Backend>(
         let comp = Encoder::new(&mut s_index, 21).unwrap();
 
         // Encrypt the stream
-        let mut enc = crypto::encrypt(&key, comp).unwrap();
+        let mut enc = crypto::encrypt(key, comp).unwrap();
 
         // Stream the data into the backend
         let dt_fmt = datetime.format(&Rfc3339).unwrap();
@@ -164,7 +164,7 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
             self.append_small(hash, key, reader)
         };
 
-        self.map.insert_chunk(&hash, &pack_id);
+        self.map.insert_chunk(hash, &pack_id);
     }
 
     fn append_big<R: Read>(
@@ -184,7 +184,7 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
 
         t_pack.append(hash.clone(), reader);
 
-        t_pack.finalize(&key);
+        t_pack.finalize(key);
 
         pack_id
     }
@@ -213,7 +213,7 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         let pack_id = t_pack.id.clone();
 
         if t_pack.append(hash.clone(), reader) {
-            self.w_pack.take().unwrap().finalize(&key);
+            self.w_pack.take().unwrap().finalize(key);
         }
 
         pack_id
@@ -222,7 +222,7 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
     pub fn finalize(mut self, datetime: OffsetDateTime, key: &crypto::Key) {
         // Force an finalize if its not already finalized
         if self.w_pack.is_some() {
-            self.w_pack.take().unwrap().finalize(&key);
+            self.w_pack.take().unwrap().finalize(key);
         }
 
         let mut s_map = self.map.unload();
@@ -231,7 +231,7 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         let comp = Encoder::new(&mut s_map, 21).unwrap();
 
         // Encrypt the stream
-        let mut enc = crypto::encrypt(&key, comp).unwrap();
+        let mut enc = crypto::encrypt(key, comp).unwrap();
 
         // Stream the data into the backend
         let dt_fmt = datetime.format(&Rfc3339).unwrap();

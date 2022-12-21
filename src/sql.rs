@@ -1,6 +1,5 @@
 use rusqlite as rs;
 
-use bincode;
 use std::io::{copy, Read, Write};
 use std::path::Path;
 use zstd::stream::read::Encoder;
@@ -247,12 +246,12 @@ impl<W: Write> MapBuilder<W> {
 
         let index = bincode::serialize(&idx).unwrap();
         let comp = Encoder::new(&index[..], 21).unwrap();
-        let mut enc = crypto::encrypt(&key, comp).unwrap();
+        let mut enc = crypto::encrypt(key, comp).unwrap();
 
         let _ = self.inner.write_edat(&mut enc).unwrap();
         let _ = self.inner.write_aend(0x00_00_00_00).unwrap();
 
         // Flush to signal to the backend that its done
-        self.inner.to_inner().flush().unwrap();
+        self.inner.into_inner().flush().unwrap();
     }
 }

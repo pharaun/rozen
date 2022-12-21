@@ -15,7 +15,7 @@ impl<W: Write> LtvcBuilder<W> {
         LtvcBuilder { inner: writer }
     }
 
-    pub fn to_inner(self) -> W {
+    pub fn into_inner(self) -> W {
         self.inner
     }
 

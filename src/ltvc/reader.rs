@@ -183,7 +183,7 @@ mod test_ltvc_iterator {
         builder.write_ahdr(0x01).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -205,7 +205,7 @@ mod test_ltvc_iterator {
         builder.write_fhdr(&hash).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -226,7 +226,7 @@ mod test_ltvc_iterator {
         builder.write_shdr().unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -244,7 +244,7 @@ mod test_ltvc_iterator {
         builder.write_fidx().unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -262,7 +262,7 @@ mod test_ltvc_iterator {
         builder.write_pidx().unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -280,7 +280,7 @@ mod test_ltvc_iterator {
         builder.write_aend(12345).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -315,7 +315,7 @@ mod test_ltvc_iterator {
         builder.write_edat(&mut edat).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -357,7 +357,7 @@ mod test_ltvc_iterator {
         builder.write_edat(&mut edat).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff
@@ -399,7 +399,7 @@ mod test_ltvc_iterator {
         builder.write_edat(&mut edat).unwrap();
 
         // Reset stream
-        let mut data = builder.to_inner();
+        let mut data = builder.into_inner();
         data.seek(SeekFrom::Start(0)).unwrap();
 
         // Read back and assert stuff

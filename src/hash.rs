@@ -2,8 +2,6 @@ use std::convert::TryInto;
 use std::fmt;
 use std::io::{copy, Read};
 
-use blake3;
-
 use crate::crypto;
 use std::hash::Hash as StdHash;
 use std::hash::Hasher as StdHasher;
@@ -53,7 +51,7 @@ pub fn hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::E
 
 // To encapsulate the hash engine used
 pub fn from_hex(hash: &str) -> Result<Hash, blake3::HexError> {
-    blake3::Hash::from_hex(hash).map(|x| Hash(x))
+    blake3::Hash::from_hex(hash).map(Hash)
 }
 
 pub fn to_hex(hash: &Hash) -> String {

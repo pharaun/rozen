@@ -16,25 +16,25 @@ const CHUNK_SIZE: usize = 8 * 1024;
 #[derive(Error, Debug)]
 pub enum CryptoError {
     #[error(transparent)]
-    IOError(#[from] std::io::Error),
+    IO(#[from] std::io::Error),
     #[error("sodiumoxide init failed")]
-    InitError,
+    Init,
     #[error("sodiumoxide init_push failed")]
-    InitPushError,
+    InitPush,
     #[error("sodiumoxide init_pull failed")]
-    InitPullError,
+    InitPull,
     #[error("sodiumoxide header parse failed")]
-    HeaderError,
+    HeaderParse,
     #[error("sodiumoxide encryption failed")]
-    EncryptionError,
+    EncryptionFailed,
     #[error("sodiumoxide decryption failed")]
-    DecryptionError,
+    DecryptionFailed,
 }
 
 type CResult<T> = Result<T, CryptoError>;
 
 pub fn init() -> CResult<()> {
-    sodiumoxide::init().map_err(|_| CryptoError::InitError)
+    sodiumoxide::init().map_err(|_| CryptoError::Init)
 }
 
 pub fn gen_key() -> Key {
@@ -64,7 +64,7 @@ pub struct Crypter<R, E> {
 //     - Use the phash (file HMAC) for additional data with the encryption to ensure that
 //     the encrypted data matches the phash
 pub fn encrypt<R: Read>(key: &Key, reader: R) -> CResult<Crypter<R, EncEngine>> {
-    let (stream, header) = Stream::init_push(&key).map_err(|_| CryptoError::InitPushError)?;
+    let (stream, header) = Stream::init_push(key).map_err(|_| CryptoError::InitPush)?;
     let engine = EncEngine(stream);
 
     // Chunk Frame size + encryption additional bytes (~17 bytes)
@@ -86,10 +86,10 @@ pub fn decrypt<R: Read>(key: &Key, mut reader: R) -> CResult<Crypter<R, DecEngin
     // Read out the header
     let mut dheader: [u8; 24] = [0; 24];
     reader.read_exact(&mut dheader)?;
-    let fheader = Header::from_slice(&dheader).ok_or(CryptoError::HeaderError)?;
+    let fheader = Header::from_slice(&dheader).ok_or(CryptoError::HeaderParse)?;
 
     // Decrypter setup
-    let stream = Stream::init_pull(&fheader, &key).map_err(|_| CryptoError::InitPullError)?;
+    let stream = Stream::init_pull(&fheader, key).map_err(|_| CryptoError::InitPull)?;
     let engine = DecEngine(stream);
 
     // Chunk Frame size (input will be frame+abytes)
@@ -130,7 +130,7 @@ impl Engine for EncEngine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> CResult<()> {
         self.0
             .push_to_vec(data, None, tag, out)
-            .map_err(|_| CryptoError::EncryptionError)
+            .map_err(|_| CryptoError::EncryptionFailed)
     }
 
     fn is_finalized(&self) -> bool {
@@ -142,12 +142,12 @@ impl Engine for DecEngine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> CResult<()> {
         self.0
             .pull_to_vec(data, None, out)
-            .map_err(|_| CryptoError::DecryptionError)
+            .map_err(|_| CryptoError::DecryptionFailed)
             .and_then(|dtag| {
                 if dtag == tag {
                     Ok(())
                 } else {
-                    Err(CryptoError::DecryptionError)
+                    Err(CryptoError::DecryptionFailed)
                 }
             })
     }
