@@ -99,6 +99,8 @@ pub struct PackOut {
     _idx: Vec<ChunkIdx>,
 }
 
+// TODO: want to figure out how to make this more generic so that other files can take advantage
+// of the sorta state machine for ltvc reading
 #[derive(Debug)]
 enum Spo {
     Start,

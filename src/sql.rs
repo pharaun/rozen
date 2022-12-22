@@ -2,11 +2,13 @@ use rusqlite as rs;
 
 use std::io::{copy, Read, Write};
 use std::path::Path;
+use zstd::stream::read::Decoder;
 use zstd::stream::read::Encoder;
 
 use rusqlite::Connection;
 
 use crate::ltvc::builder::LtvcBuilder;
+use crate::ltvc::reader::{LtvcEntry, LtvcReader};
 
 use crate::crypto;
 use crate::hash;
@@ -38,6 +40,16 @@ enum UnloadType {
     Pidx,
 }
 
+#[derive(Debug)]
+enum Spo {
+    Start,
+    Ahdr,
+    Shdr,
+    Pidx,
+    Edat,
+    Aend,
+}
+
 impl SqlDb {
     fn new() -> Self {
         let db_tmp = tempfile::NamedTempFile::new().unwrap();
@@ -61,12 +73,59 @@ impl SqlDb {
             .unwrap();
     }
 
-    // TODO: deal with encryption + compression
-    fn load<R: Read>(reader: &mut R) -> Self {
+    fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
+        let mut ltvc = LtvcReader::new(reader);
+        let mut state = Spo::Start;
         let mut db_tmp = tempfile::NamedTempFile::new().unwrap();
-        copy(reader, &mut db_tmp).unwrap();
-        let conn = Connection::open(db_tmp.path()).unwrap();
 
+        loop {
+            match (state, ltvc.next()) {
+                // Assert that the first entry is an Ahdr with 0x01 as version
+                (Spo::Start, Some(Ok(LtvcEntry::Ahdr { version }))) if version == 0x01 => {
+                    println!("\tAHDR 0x01");
+                    state = Spo::Ahdr;
+                }
+
+                // Assert that Shdr follows the Ahdr
+                (Spo::Ahdr, Some(Ok(LtvcEntry::Shdr))) => {
+                    println!("\tShdr");
+                    state = Spo::Shdr;
+                }
+
+                // Assert that Pidx follows the Ahdr
+                (Spo::Ahdr, Some(Ok(LtvcEntry::Pidx))) => {
+                    println!("\tPidx");
+                    state = Spo::Pidx;
+                }
+
+                // Assert that Edat follows Shdr/Pidx
+                (Spo::Shdr, Some(Ok(LtvcEntry::Edat { mut data })))
+                | (Spo::Pidx, Some(Ok(LtvcEntry::Edat { mut data }))) => {
+                    println!("\tShdr/Pidx Edat");
+                    let mut dec = crypto::decrypt(key, &mut data).unwrap();
+                    let mut und = Decoder::new(&mut dec).unwrap();
+                    copy(&mut und, &mut db_tmp).unwrap();
+                    state = Spo::Edat;
+                }
+
+                // Assert that Aend follows Edat
+                (Spo::Edat, Some(Ok(LtvcEntry::Aend { idx: _ }))) => {
+                    println!("\tAend");
+                    state = Spo::Aend;
+                }
+
+                // Asserts that the iterator is terminated
+                (Spo::Aend, None) => break,
+
+                // Unhandled states
+                // TODO: improve debuggability
+                (s, None) => panic!("In state: {:?} unexpected end of iterator", s),
+                (s, Some(Err(_))) => panic!("In state: {:?} error on iterator", s),
+                (s, Some(Ok(_))) => panic!("In state: {:?} unknown LtvcEntry", s),
+            }
+        }
+
+        let conn = Connection::open(db_tmp.path()).unwrap();
         SqlDb { db_tmp, conn }
     }
 
@@ -113,9 +172,9 @@ impl Index {
         Index { db }
     }
 
-    pub fn load<R: Read>(index: &mut R) -> Self {
+    pub fn load<R: Read>(index: &mut R, key: &crypto::Key) -> Self {
         Index {
-            db: SqlDb::load(index),
+            db: SqlDb::load(index, key),
         }
     }
 
@@ -166,9 +225,9 @@ impl Map {
         Map { db }
     }
 
-    pub fn load<R: Read>(index: &mut R) -> Self {
+    pub fn load<R: Read>(index: &mut R, key: &crypto::Key) -> Self {
         Map {
-            db: SqlDb::load(index),
+            db: SqlDb::load(index, key),
         }
     }
 
@@ -195,15 +254,17 @@ impl Map {
     }
 }
 
-pub fn walk_files<R, F>(index: &mut R, map: &mut R, mut f: F)
+pub fn walk_files<R, F>(index: &mut R, map: &mut R, key: &crypto::Key, mut f: F)
 where
     F: FnMut(&str, u32, hash::Hash, hash::Hash),
     R: Read,
 {
     // Load up the index db
-    let idx = Index::load(index).db;
+    println!("LOADING Index sql database");
+    let idx = Index::load(index, key).db;
     let map_file = {
-        let m = Map::load(map).db;
+        println!("LOADING Map sql database");
+        let m = Map::load(map, key).db;
         let _ = m.conn.close();
         m.db_tmp
     };
