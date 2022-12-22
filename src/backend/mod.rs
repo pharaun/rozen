@@ -22,5 +22,9 @@ pub trait Backend {
 
     // Write Multipart, give a write handle and it will handle the streaming
     // TODO: consider if finalize on a trait is better than 'flush' for our purposes
-    fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String>;
+    fn write_multi_filename(&self, key: &str) -> Result<Box<dyn Write>, String>;
+
+    fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
+        self.write_multi_filename(&hash::to_hex(key))
+    }
 }

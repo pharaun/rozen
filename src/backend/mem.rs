@@ -8,7 +8,6 @@ use std::rc::Rc;
 
 use crate::backend::Backend;
 use crate::buf::fill_buf;
-use crate::hash;
 
 #[allow(clippy::identity_op)]
 const CHUNK_SIZE: usize = 1 * 1024;
@@ -85,10 +84,10 @@ impl Backend for MemoryVFS {
         )))
     }
 
-    fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
+    fn write_multi_filename(&self, key: &str) -> Result<Box<dyn Write>, String> {
         Ok(Box::new(VFSWrite {
             conn: self.conn.clone(),
-            key: key.clone(),
+            key: key.to_string(),
             t_buf: Vec::new(),
         }))
     }
@@ -96,7 +95,7 @@ impl Backend for MemoryVFS {
 
 struct VFSWrite {
     conn: Rc<Connection>,
-    key: hash::Hash,
+    key: String,
     t_buf: Vec<u8>,
 }
 
@@ -109,7 +108,7 @@ impl Write for VFSWrite {
     // TODO: not sure if this is proper use of flush or if we should have a finalize call instead
     fn flush(&mut self) -> Result<(), std::io::Error> {
         let data = Cursor::new(self.t_buf.clone());
-        write_filename(self.conn.clone(), &hash::to_hex(&self.key), data).unwrap();
+        write_filename(self.conn.clone(), &self.key, data).unwrap();
         Ok(())
     }
 }

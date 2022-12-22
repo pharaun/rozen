@@ -15,7 +15,6 @@ use std::rc::Rc;
 
 use crate::backend::Backend;
 use crate::buf::flush_buf;
-use crate::hash;
 
 pub struct S3 {
     client: Rc<Client>,
@@ -96,12 +95,12 @@ impl Backend for S3 {
         }))
     }
 
-    fn write_multi(&self, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
+    fn write_multi_filename(&self, key: &str) -> Result<Box<dyn Write>, String> {
         let call = self
             .client
             .create_multipart_upload()
             .bucket("test")
-            .key(&hash::to_hex(key))
+            .key(key)
             .send();
 
         let res = self.rt.block_on(async { call.await }).unwrap();
@@ -109,7 +108,7 @@ impl Backend for S3 {
         Ok(Box::new(S3Multi {
             client: self.client.clone(),
             rt: self.rt.clone(),
-            key: key.clone(),
+            key: key.to_string(),
             id: res.upload_id.unwrap(),
             part: Vec::new(),
             part_id: 1,
@@ -121,7 +120,7 @@ impl Backend for S3 {
 struct S3Multi {
     client: Rc<Client>,
     rt: Rc<Runtime>,
-    key: hash::Hash,
+    key: String,
     id: String,
     part: Vec<CompletedPart>,
     part_id: i32,
@@ -153,7 +152,7 @@ impl Write for S3Multi {
             .client
             .complete_multipart_upload()
             .bucket("test")
-            .key(hash::to_hex(&self.key))
+            .key(&self.key)
             .upload_id(self.id.clone())
             .multipart_upload(
                 CompletedMultipartUpload::builder()
@@ -185,7 +184,7 @@ impl S3Multi {
                 .upload_part()
                 .body(stream)
                 .bucket("test")
-                .key(hash::to_hex(&self.key))
+                .key(&self.key)
                 .upload_id(self.id.clone())
                 .part_number(self.part_id)
                 .send();

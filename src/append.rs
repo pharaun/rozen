@@ -83,20 +83,13 @@ pub fn snapshot<B: Backend>(
         // Finalize the CAS
         cas.finalize(datetime, key);
 
-        // Spool the sqlite file into the backend as index
-        // TODO: update this to support the archive file format defined in pack.rs
-        let mut s_index = index.unload();
-
-        let comp = Encoder::new(&mut s_index, 21).unwrap();
-
-        // Encrypt the stream
-        let mut enc = crypto::encrypt(key, comp).unwrap();
-
-        // Stream the data into the backend
+        // Unload the sqlite file into backend as snapshot
         let dt_fmt = datetime.format(&Rfc3339).unwrap();
         let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
         println!("INDEX: {:?}", filename);
-        backend.write_filename(&filename, &mut enc).unwrap();
+
+        let multiwrite = backend.write_multi_filename(&filename).unwrap();
+        index.unload(key, multiwrite);
     }
 }
 
@@ -225,19 +218,13 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
             self.w_pack.take().unwrap().finalize(key);
         }
 
-        let mut s_map = self.map.unload();
-
-        // Stream the map into backend
-        let comp = Encoder::new(&mut s_map, 21).unwrap();
-
-        // Encrypt the stream
-        let mut enc = crypto::encrypt(key, comp).unwrap();
-
-        // Stream the data into the backend
+        // Unload the sqlite file into backend as snapshot
         let dt_fmt = datetime.format(&Rfc3339).unwrap();
         let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
         println!("MAP: {:?}", filename);
-        self.w_backend.write_filename(&filename, &mut enc).unwrap();
+
+        let multiwrite = self.w_backend.write_multi_filename(&filename).unwrap();
+        self.map.unload(key, multiwrite);
     }
 
     // TODO:

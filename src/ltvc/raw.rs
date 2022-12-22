@@ -76,10 +76,7 @@ impl<R: Read> LtvcReaderRaw<R> {
         hash.update(&data[..]);
 
         if hash.finalize() == entry_hash {
-            Ok(LtvcEntryRaw {
-                typ,
-                data,
-            })
+            Ok(LtvcEntryRaw { typ, data })
         } else {
             Err(LtvcError::DataChecksum)
         }

@@ -5,7 +5,6 @@ use std::path::Path;
 use zstd::stream::read::Encoder;
 
 use rusqlite::Connection;
-use std::fs::File;
 
 use crate::ltvc::builder::LtvcBuilder;
 
@@ -32,6 +31,11 @@ use crate::hash;
 struct SqlDb {
     db_tmp: tempfile::NamedTempFile,
     conn: Connection,
+}
+
+enum UnloadType {
+    Shdr,
+    Pidx,
 }
 
 impl SqlDb {
@@ -66,9 +70,25 @@ impl SqlDb {
         SqlDb { db_tmp, conn }
     }
 
-    fn unload(self) -> File {
+    fn unload<W: Write>(self, header: UnloadType, key: &crypto::Key, writer: W) {
         self.conn.close().unwrap();
-        self.db_tmp.into_file()
+
+        let mut ltvc = LtvcBuilder::new(writer);
+        ltvc.write_ahdr(0x01).unwrap();
+
+        match header {
+            UnloadType::Shdr => ltvc.write_shdr().unwrap(),
+            UnloadType::Pidx => ltvc.write_pidx().unwrap(),
+        };
+
+        let mut db_file = self.db_tmp.into_file();
+        let comp = Encoder::new(&mut db_file, 21).unwrap();
+        let mut enc = crypto::encrypt(key, comp).unwrap();
+
+        ltvc.write_edat(&mut enc).unwrap();
+        ltvc.write_aend(0x00_00_00_00).unwrap();
+
+        ltvc.into_inner().flush().unwrap();
     }
 }
 
@@ -99,8 +119,8 @@ impl Index {
         }
     }
 
-    pub fn unload(self) -> File {
-        self.db.unload()
+    pub fn unload<W: Write>(self, key: &crypto::Key, writer: W) {
+        self.db.unload(UnloadType::Shdr, key, writer);
     }
 
     // TODO: improve the types
@@ -152,8 +172,8 @@ impl Map {
         }
     }
 
-    pub fn unload(self) -> File {
-        self.db.unload()
+    pub fn unload<W: Write>(self, key: &crypto::Key, writer: W) {
+        self.db.unload(UnloadType::Pidx, key, writer);
     }
 
     // TODO: improve the types
@@ -220,38 +240,4 @@ where
     // Cleanup
     idx.detach("map");
     let _ = idx.conn.close();
-}
-
-struct MapBuilder<W: Write> {
-    inner: LtvcBuilder<W>,
-}
-
-// TODO: copy the finalize idea to the unload impl for IndexMap
-impl<W: Write> MapBuilder<W> {
-    fn new(writer: W) -> Self {
-        let mut mapper = MapBuilder {
-            inner: LtvcBuilder::new(writer),
-        };
-
-        // Start with the Archive Header (kinda serves as a magic bits)
-        let _ = mapper.inner.write_ahdr(0x01).unwrap();
-        mapper
-    }
-
-    // TODO: should hash+hmac various data bits in a mapfile
-    // Store the hmac hash of the packfile in packfile + snapshot itself.
-    fn finalize(mut self, key: &crypto::Key) {
-        let _ = self.inner.write_pidx().unwrap();
-        let idx = vec![1, 2, 3, 4];
-
-        let index = bincode::serialize(&idx).unwrap();
-        let comp = Encoder::new(&index[..], 21).unwrap();
-        let mut enc = crypto::encrypt(key, comp).unwrap();
-
-        let _ = self.inner.write_edat(&mut enc).unwrap();
-        let _ = self.inner.write_aend(0x00_00_00_00).unwrap();
-
-        // Flush to signal to the backend that its done
-        self.inner.into_inner().flush().unwrap();
-    }
 }
