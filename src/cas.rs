@@ -1,7 +1,7 @@
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-use crate::backend::Backend;
+use crate::remote::Remote;
 use crate::crypto;
 use crate::hash;
 use crate::pack;
@@ -42,18 +42,18 @@ use std::io::Write;
 //      * Fetch sub-parts of the data stream (ranged get)
 //      * Fetch whole thing
 //      * Manage s3/glacier/deep-freeze lifecycle (adjecent system, not in backend directly)
-pub struct ObjectStore<'a, B: Backend + 'a> {
-    w_backend: &'a B,
-    w_pack: Option<PackBuilder<Box<dyn Write>>>,
+pub struct ObjectStore<'a, B: Remote + 'a> {
+    remote: &'a B,
+    current_pack: Option<PackBuilder<Box<dyn Write>>>,
     map: Map,
 }
 
-impl<'a, B: Backend> ObjectStore<'a, B> {
-    pub fn new(backend: &'a mut B) -> Self {
+impl<'a, B: Remote> ObjectStore<'a, B> {
+    pub fn new(remote: &'a mut B) -> Self {
         // TODO: later do something like fetch the latest cache and use that
         ObjectStore {
-            w_backend: backend,
-            w_pack: None,
+            remote,
+            current_pack: None,
             map: Map::new(),
         }
     }
@@ -82,16 +82,16 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
     ) -> hash::Hash {
         // This one focuses on reading in one single big file into its own packfile and uploading
         // it as it is
-        let mut t_pack = {
+        let mut temp_pack = {
             let pack_id = pack::generate_pack_id();
-            let multiwrite = self.w_backend.write_multi(&pack_id).unwrap();
+            let multiwrite = self.remote.write_multi(&pack_id).unwrap();
             PackBuilder::new(pack_id, multiwrite)
         };
-        let pack_id = t_pack.id.clone();
+        let pack_id = temp_pack.id.clone();
 
-        t_pack.append(hash.clone(), reader);
+        temp_pack.append(hash.clone(), reader);
 
-        t_pack.finalize(key);
+        temp_pack.finalize(key);
 
         pack_id
     }
@@ -112,15 +112,15 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
         //  4. If below certain size go ahead and pack it up
         //  5. if above certain size just send it as its own archive to
         //     backend
-        let t_pack = self.w_pack.get_or_insert_with(|| {
+        let temp_pack = self.current_pack.get_or_insert_with(|| {
             let pack_id = pack::generate_pack_id();
-            let multiwrite = self.w_backend.write_multi(&pack_id).unwrap();
+            let multiwrite = self.remote.write_multi(&pack_id).unwrap();
             PackBuilder::new(pack_id, multiwrite)
         });
-        let pack_id = t_pack.id.clone();
+        let pack_id = temp_pack.id.clone();
 
-        if t_pack.append(hash.clone(), reader) {
-            self.w_pack.take().unwrap().finalize(key);
+        if temp_pack.append(hash.clone(), reader) {
+            self.current_pack.take().unwrap().finalize(key);
         }
 
         pack_id
@@ -128,16 +128,16 @@ impl<'a, B: Backend> ObjectStore<'a, B> {
 
     pub fn finalize(mut self, datetime: OffsetDateTime, key: &crypto::Key) {
         // Force an finalize if its not already finalized
-        if self.w_pack.is_some() {
-            self.w_pack.take().unwrap().finalize(key);
+        if self.current_pack.is_some() {
+            self.current_pack.take().unwrap().finalize(key);
         }
 
-        // Unload the sqlite file into backend as snapshot
+        // Unload the sqlite file into remote as snapshot
         let dt_fmt = datetime.format(&Rfc3339).unwrap();
         let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
         println!("MAP: {:?}", filename);
 
-        let multiwrite = self.w_backend.write_multi_filename(&filename).unwrap();
+        let multiwrite = self.remote.write_multi_filename(&filename).unwrap();
         self.map.unload(key, multiwrite);
     }
 

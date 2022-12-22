@@ -13,7 +13,7 @@ use tokio::runtime::Runtime;
 // Single threaded but we are on one thread here for now
 use std::rc::Rc;
 
-use crate::backend::Backend;
+use crate::remote::Remote;
 use crate::buf::flush_buf;
 
 pub struct S3 {
@@ -37,7 +37,7 @@ impl S3 {
     }
 }
 
-impl Backend for S3 {
+impl Remote for S3 {
     fn list_keys(&self) -> Result<Box<dyn Iterator<Item = String>>, String> {
         let call = self.client.list_objects_v2().bucket("test").send();
 

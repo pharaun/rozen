@@ -3,7 +3,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use zstd::stream::read::Encoder;
 
-use crate::backend::Backend;
+use crate::remote::Remote;
 use crate::cas::ObjectStore;
 use crate::crypto;
 use crate::hash;
@@ -19,14 +19,14 @@ use crate::sql::Index;
 //      with what data should be backed up
 //      then the queue can then manage "whole" or "chunked" or "chunked+delta" for processing
 //      before it ships it into the packfile possibly
-pub fn snapshot<B: Backend>(
+pub fn snapshot<B: Remote>(
     key: &crypto::Key,
-    backend: &mut B,
+    remote: &mut B,
     datetime: OffsetDateTime,
     walker: ignore::Walk,
 ) {
     let index = Index::new();
-    let mut cas = ObjectStore::new(backend);
+    let mut cas = ObjectStore::new(remote);
 
     {
         for entry in walker {
@@ -81,12 +81,12 @@ pub fn snapshot<B: Backend>(
         // Finalize the CAS
         cas.finalize(datetime, key);
 
-        // Unload the sqlite file into backend as snapshot
+        // Unload the sqlite file into remote as snapshot
         let dt_fmt = datetime.format(&Rfc3339).unwrap();
         let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
         println!("INDEX: {:?}", filename);
 
-        let multiwrite = backend.write_multi_filename(&filename).unwrap();
+        let multiwrite = remote.write_multi_filename(&filename).unwrap();
         index.unload(key, multiwrite);
     }
 }

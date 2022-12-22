@@ -6,7 +6,7 @@ use std::io::{Cursor, Read, Write};
 // Single threaded but we are on one thread here for now
 use std::rc::Rc;
 
-use crate::backend::Backend;
+use crate::remote::Remote;
 use crate::buf::fill_buf;
 
 #[allow(clippy::identity_op)]
@@ -42,7 +42,7 @@ impl MemoryVFS {
     }
 }
 
-impl Backend for MemoryVFS {
+impl Remote for MemoryVFS {
     fn list_keys(&self) -> Result<Box<dyn Iterator<Item = String>>, String> {
         let mut stmt = self.conn.prepare("SELECT DISTINCT key FROM blob").unwrap();
         Ok(Box::new(
@@ -155,8 +155,8 @@ fn write_filename<R: Read>(
 
 #[cfg(test)]
 mod tests {
-    use crate::backend::mem::Backend;
-    use crate::backend::mem::MemoryVFS;
+    use crate::remote::mem::Remote;
+    use crate::remote::mem::MemoryVFS;
     use std::io::Cursor;
 
     #[test]

@@ -5,14 +5,14 @@ use std::io::{Read, Write};
 
 use crate::hash;
 
-pub trait Backend {
+pub trait Remote {
     fn list_keys(&self) -> Result<Box<dyn Iterator<Item = String>>, String>;
 
     // Api for reading/writing filenames
     fn write_filename<R: Read>(&self, filename: &str, reader: R) -> Result<(), String>;
     fn read_filename(&mut self, filename: &str) -> Result<Box<dyn Read>, String>;
 
-    // Api for reading/Writing hashes to the backend
+    // Api for reading/Writing hashes to the remote
     fn write<R: Read>(&self, key: &hash::Hash, reader: R) -> Result<(), String> {
         self.write_filename(&hash::to_hex(key), reader)
     }

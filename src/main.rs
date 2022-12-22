@@ -6,8 +6,8 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use zstd::stream::read::Decoder;
 
-mod backend;
-use crate::backend::Backend;
+mod remote;
+use crate::remote::Remote;
 
 mod append;
 mod buf;
@@ -72,12 +72,12 @@ fn main() {
     let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
     let _stype = config.sources.get(0).unwrap().source_type;
 
-    // In memory backend for data storage
-    //let mut backend = backend::mem::MemoryVFS::new(Some("test.sqlite"));
-    let mut backend = backend::mem::MemoryVFS::new(None);
+    // In memory remote for data storage
+    //let mut remote = remote::mem::MemoryVFS::new(Some("test.sqlite"));
+    let mut remote = remote::mem::MemoryVFS::new(None);
 
-    // Build a s3 backend here
-    let mut _backend = backend::s3::S3::new_endpoint("http://localhost:8333").unwrap();
+    // Build a s3 remote here
+    let mut _remote = remote::s3::S3::new_endpoint("http://localhost:8333").unwrap();
 
     // TODO: should name various things like Index getting its own hashkey
     //  * I-<timestamp> = index
@@ -92,7 +92,7 @@ fn main() {
     let datetime = OffsetDateTime::now_utc();
     append::snapshot(
         &key,
-        &mut backend,
+        &mut remote,
         datetime,
         WalkBuilder::new(target)
             .follow_links(config.symlink)
@@ -105,12 +105,12 @@ fn main() {
     // Indexer
     let dt_fmt = datetime.format(&Rfc3339).unwrap();
     let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
-    let mut index_content = Backend::read_filename(&mut backend, &filename).unwrap();
+    let mut index_content = remote.read_filename(&filename).unwrap();
 
     // Mapper
     let dt_fmt = datetime.format(&Rfc3339).unwrap();
     let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
-    let mut map_content = Backend::read_filename(&mut backend, &filename).unwrap();
+    let mut map_content = remote.read_filename(&filename).unwrap();
 
     // Cached packfile refs
     let mut pack_cache = HashMap::new();
@@ -129,7 +129,7 @@ fn main() {
             if !pack_cache.contains_key(&pack) {
                 println!("\t\tLoading: {:?}", pack);
 
-                let mut pack_read = Backend::read(&mut backend, &pack).unwrap();
+                let mut pack_read = remote.read(&pack).unwrap();
                 let pack_file = pack::PackOut::load(&mut pack_read, &key);
 
                 pack_cache.insert(pack.clone(), pack_file);
