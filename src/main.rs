@@ -9,7 +9,7 @@ use zstd::stream::read::Decoder;
 mod remote;
 use crate::remote::Remote;
 
-mod append;
+mod snapshot;
 mod buf;
 mod cas;
 mod crypto;
@@ -90,10 +90,23 @@ fn main() {
     //  * B-<hash>.p? - I'm not sure, could have B-<hash> -> metadata -> B-<hash>.p? but could
     //      also just always have the B-<hash> xor B-<hash>.p?
     let datetime = OffsetDateTime::now_utc();
-    append::snapshot(
+    let dt_fmt = datetime.format(&Rfc3339).unwrap();
+
+    // Store indexer + Map
+    let filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
+    println!("Write INDEX: {:?}", filename);
+    let mut index_content = remote.write_multi_filename(&filename).unwrap();
+
+    let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
+    println!("Write MAP: {:?}", filename);
+    let mut map_content = remote.write_multi_filename(&filename).unwrap();
+
+    // Perform an appending snapshot
+    snapshot::append(
         &key,
         &mut remote,
-        datetime,
+        &mut index_content,
+        &mut map_content,
         WalkBuilder::new(target)
             .follow_links(config.symlink)
             .standard_filters(false)
@@ -101,6 +114,7 @@ fn main() {
             .sort_by_file_name(|a, b| a.cmp(b))
             .build(),
     );
+
 
     // Indexer
     let dt_fmt = datetime.format(&Rfc3339).unwrap();

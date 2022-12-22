@@ -1,6 +1,3 @@
-use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
-
 use crate::remote::Remote;
 use crate::crypto;
 use crate::hash;
@@ -126,19 +123,14 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         pack_id
     }
 
-    pub fn finalize(mut self, datetime: OffsetDateTime, key: &crypto::Key) {
+    pub fn finalize<W: Write>(mut self, map_content: W, key: &crypto::Key) {
         // Force an finalize if its not already finalized
         if self.current_pack.is_some() {
             self.current_pack.take().unwrap().finalize(key);
         }
 
         // Unload the sqlite file into remote as snapshot
-        let dt_fmt = datetime.format(&Rfc3339).unwrap();
-        let filename = format!("MAP-{}.sqlite.zst", dt_fmt);
-        println!("MAP: {:?}", filename);
-
-        let multiwrite = self.remote.write_multi_filename(&filename).unwrap();
-        self.map.unload(key, multiwrite);
+        self.map.unload(key, map_content);
     }
 
     // TODO:
