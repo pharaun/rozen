@@ -11,6 +11,7 @@ use crate::backend::Backend;
 
 mod append;
 mod buf;
+mod cas;
 mod crypto;
 mod hash;
 mod ltvc;
