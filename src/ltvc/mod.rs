@@ -41,9 +41,9 @@
 //! | AHDR       | Archive Header    | The first chunk, holds archive wide metadata |
 //! | FHDR       | File Header       | Holds per-file metadata |
 //! | SHDR       | Snapshot Header   | Holds snapshot metadata |
-//! | FIDX       | File Index        | Offset+length index of all files in the archive |
+//! | AIDX       | Archive Index     | Offset+length index of all records in the archive |
 //! | PIDX       | Pack Index        | Chunk to Packfile index |
-//! | EDAT       | Encrypted Data    | Encrypted blobs. `FIDX/FHDR` before defines the content |
+//! | EDAT       | Encrypted Data    | Encrypted blobs. `AIDX/FHDR` before defines the content |
 //! | AEND       | Archive Ending    | Terminates the archive begun by a `AHDR` |
 //!
 //! ## AHDR
@@ -51,7 +51,7 @@
 //! This is the chunk that begins an archive block in a file. This currently only holds the archive
 //! block version since we are still evolving the precise format so this is used to handle file
 //! format versoning. In the future there may be additional metadata within. This chunk must be
-//! followed by one of these following chunks: `FHDR`, `FIDX`, `AEND`
+//! followed by one of these following chunks: `FHDR`, `AIDX`, `AEND`
 //!
 //! | Type | Name    | Description |
 //! | ---: | ------- | ----------- |
@@ -77,10 +77,10 @@
 //!
 //! There is currently no data held within the value field of this chunk.
 //!
-//! ## FIDX
+//! ## AIDX
 //!
 //! This like the `FHDR` chunk also defines what the content inside the `EDAT` that follows. This
-//! is specifically for holding the index of all of the file HMAC within this archive block. See:
+//! is specifically for holding the index of all of the archive blocks within this archive block. See:
 //! [`crate::pack::ChunkIdx`]. This is an optional chunk but is highly encouraged to support seeks in an
 //! archive block that contains more than 1 `FHDR`. This chunk must be followed by an `EDAT`
 //!
@@ -88,7 +88,7 @@
 //!
 //! ## PIDX
 //!
-//! This is like `FIDX` chunk, except that its the tag for what kind of content is in the `EDAT`
+//! This is like `AIDX` chunk, except that its the tag for what kind of content is in the `EDAT`
 //! that follows. This is specifically for holding the mapping of all file hash -> packfile ids.
 //! This is to allow us to do lookup by hash+chunk and get which packfile it was stored in.
 //!
@@ -96,13 +96,13 @@
 //!
 //! ## EDAT
 //!
-//! Encrypted data chunk. This must be preceeded by an; `FHDR`, `SHDR`, `FIDX`, or `PIDX`  at this
+//! Encrypted data chunk. This must be preceeded by an; `FHDR`, `SHDR`, `AIDX`, or `PIDX`  at this
 //! point in time. This contains the encrypted and compressed datastream.
 //!
 //! There must be 1 or more chunk to hold the entire datastream. To support the streaming usecase
 //! the content of each `EDAT` is appended to the preceeding one. The LTVC reader is allowed to
 //! reject an chunk that is too large to prevent out of memory exhaustion attacks. Must be followed
-//! by an `FHDR`, `FIDX`, or `AEND` to mark the end of an stream of data. Can be followed by more
+//! by an `FHDR`, `AIDX`, or `AEND` to mark the end of an stream of data. Can be followed by more
 //! `EDAT` if the data stream cannot be contained within one chunk.
 //!
 //! | Type    | Name    | Description |
@@ -112,21 +112,22 @@
 //! ## AEND
 //!
 //! Terminates an archive block opened by the `AHDR` and contains an optional pointer to the
-//! `FIDX` for easy seek-ability within an archive block.
+//! `AIDX` for easy seek-ability within an archive block.
 //!
 //! | Type | Name    | Description |
 //! | ---: | ------- | ----------- |
-//! | u32  | idx_ptr | The offset (from start of the archive block) pointer to the `FIDX` |
+//! | u32  | idx_ptr | The offset (from start of the archive block) pointer to the `AIDX` |
 //!
-//! The standard strategy for doing a seek in an archive block which contains a `FIDX` is to
+//! The standard strategy for doing a seek in an archive block which contains a `AIDX` is to
 //! fetch the last 16 bytes (4 byte length, 4 byte type, 4 byte offset, 4 byte checksum). Once
-//! the `AEND` block is fetched, parse out the `FIDX` pointer, and then do a second fetch of
-//! `FIDX.offset - AEND.offset`. After the `FIDX` is parsed the user can now use this index to
+//! the `AEND` block is fetched, parse out the `AIDX` pointer, and then do a second fetch of
+//! `AIDX.offset - AEND.offset`. After the `AIDX` is parsed the user can now use this index to
 //! do ranged seek within the entire archive block.
 //!
-//! **TODO**: Need to decide how to handle archive block without a `FIDX`. The pointer might be
+//! **TODO**: Need to decide how to handle archive block without a `AIDX`. The pointer might be
 //! set to `0x00_00_00_00`
 pub mod builder;
+pub mod linear;
 mod raw;
 pub mod reader;
 

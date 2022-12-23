@@ -77,7 +77,7 @@ impl<W: Write> PackBuilder<W> {
     pub fn finalize(mut self, key: &crypto::Key) {
         let f_idx = self.p_idx;
 
-        self.p_idx += self.inner.write_fidx().unwrap();
+        self.p_idx += self.inner.write_aidx().unwrap();
 
         let index = bincode::serialize(&self.idx).unwrap();
         let comp = Encoder::new(&index[..], 21).unwrap();
@@ -92,7 +92,7 @@ impl<W: Write> PackBuilder<W> {
 }
 
 // TODO: for now have this PackOut be a streaming validating pack reader, it stream reads
-// and then cache the idx+data then use that info to validate the fidx and aend
+// and then cache the idx+data then use that info to validate the aidx and aend
 // TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
 pub struct PackOut {
     idx: HashMap<hash::Hash, Vec<u8>>,
@@ -107,8 +107,8 @@ enum Spo {
     Ahdr,
     Fhdr { hash: hash::Hash },
     FhdrEdat,
-    Fidx,
-    FidxEdat,
+    Aidx,
+    AidxEdat,
     Aend,
 }
 
@@ -144,15 +144,15 @@ impl PackOut {
                     state = Spo::FhdrEdat;
                 }
 
-                // Assert that Fidx follows FhdrEdat
-                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fidx))) => {
-                    println!("\t\t\tFidx");
-                    state = Spo::Fidx;
+                // Assert that Aidx follows FhdrEdat
+                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Aidx))) => {
+                    println!("\t\t\tAidx");
+                    state = Spo::Aidx;
                 }
 
-                // Assert that Fidx Edat follows Fidx
-                (Spo::Fidx, Some(Ok(LtvcEntry::Edat { mut data }))) => {
-                    println!("\t\t\tFidx Edat");
+                // Assert that Aidx Edat follows Aidx
+                (Spo::Aidx, Some(Ok(LtvcEntry::Edat { mut data }))) => {
+                    println!("\t\t\tAidx Edat");
                     let mut idx_buf: Vec<u8> = Vec::new();
                     let mut dec = crypto::decrypt(key, &mut data).unwrap();
                     let mut und = Decoder::new(&mut dec).unwrap();
@@ -161,11 +161,11 @@ impl PackOut {
                     // Deserialize the index
                     chunk_idx = bincode::deserialize(&idx_buf).unwrap();
                     println!("\t\t\t\tChunk len: {:?}", chunk_idx.len());
-                    state = Spo::FidxEdat;
+                    state = Spo::AidxEdat;
                 }
 
-                // Assert that Aend follows FidxEdat
-                (Spo::FidxEdat, Some(Ok(LtvcEntry::Aend { idx: _ }))) => {
+                // Assert that Aend follows AidxEdat
+                (Spo::AidxEdat, Some(Ok(LtvcEntry::Aend { idx: _ }))) => {
                     println!("\t\t\tAend");
                     state = Spo::Aend;
                 }

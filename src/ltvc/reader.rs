@@ -30,7 +30,7 @@ pub enum LtvcEntry<R: Read> {
     Ahdr { version: u8 },
     Fhdr { hash: Hash },
     Shdr,
-    Fidx,
+    Aidx,
     Pidx,
     Edat { data: EdatReader<R> },
     Aend { idx: usize },
@@ -129,7 +129,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         }))
                     }
                     b"SHDR" => Some(Ok(LtvcEntry::Shdr)),
-                    b"FIDX" => Some(Ok(LtvcEntry::Fidx)),
+                    b"AIDX" => Some(Ok(LtvcEntry::Aidx)),
                     b"PIDX" => Some(Ok(LtvcEntry::Pidx)),
                     b"EDAT" => {
                         // TODO: If we skip first EDAT we will get second one with a reader
@@ -237,11 +237,11 @@ mod test_ltvc_iterator {
     }
 
     #[test]
-    fn one_fidx() {
+    fn one_aidx() {
         // Write to the stream
         let data = Cursor::new(Vec::new());
         let mut builder = LtvcBuilder::new(data);
-        builder.write_fidx().unwrap();
+        builder.write_aidx().unwrap();
 
         // Reset stream
         let mut data = builder.into_inner();
@@ -250,7 +250,7 @@ mod test_ltvc_iterator {
         // Read back and assert stuff
         let mut reader = LtvcReader::new(data);
 
-        assert_eq!(LtvcEntry::Fidx, reader.next().unwrap().unwrap());
+        assert_eq!(LtvcEntry::Aidx, reader.next().unwrap().unwrap());
         assert!(reader.next().is_none());
     }
 

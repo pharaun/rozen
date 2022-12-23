@@ -80,8 +80,8 @@ impl<W: Write> LtvcBuilder<W> {
         Ok(r_len)
     }
 
-    pub fn write_fidx(&mut self) -> Result<usize, Error> {
-        self.write(b"FIDX", &[])
+    pub fn write_aidx(&mut self) -> Result<usize, Error> {
+        self.write(b"AIDX", &[])
     }
 
     pub fn write_pidx(&mut self) -> Result<usize, Error> {
