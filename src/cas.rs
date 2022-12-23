@@ -1,8 +1,8 @@
-use crate::remote::Remote;
 use crate::crypto;
 use crate::hash;
 use crate::pack;
 use crate::pack::PackBuilder;
+use crate::remote::Remote;
 use crate::sql::Map;
 use std::io::Read;
 use std::io::Write;

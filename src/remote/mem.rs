@@ -6,8 +6,8 @@ use std::io::{Cursor, Read, Write};
 // Single threaded but we are on one thread here for now
 use std::rc::Rc;
 
-use crate::remote::Remote;
 use crate::buf::fill_buf;
+use crate::remote::Remote;
 
 #[allow(clippy::identity_op)]
 const CHUNK_SIZE: usize = 1 * 1024;
@@ -155,8 +155,8 @@ fn write_filename<R: Read>(
 
 #[cfg(test)]
 mod tests {
-    use crate::remote::mem::Remote;
     use crate::remote::mem::MemoryVFS;
+    use crate::remote::mem::Remote;
     use std::io::Cursor;
 
     #[test]

@@ -1,10 +1,15 @@
-use std::io::{Seek, SeekFrom, Write, Read};
+use std::io::{Read, Seek, SeekFrom, Write};
+use zstd::stream::read::Decoder;
 use zstd::stream::read::Encoder;
 
-use crate::remote::Remote;
+use std::collections::HashMap;
+
 use crate::cas::ObjectStore;
 use crate::crypto;
 use crate::hash;
+use crate::pack::PackOut;
+use crate::remote::Remote;
+use crate::sql::walk_files;
 use crate::sql::Index;
 
 // TODO: can probs make the snapshot be strictly focused on snapshot concerns such as
@@ -86,7 +91,49 @@ pub fn append<B: Remote, W: Write>(
 pub fn fetch<B: Remote, R: Read>(
     key: &crypto::Key,
     remote: &mut B,
-    index_content: R,
-    map_content: R,
+    index_content: &mut R,
+    map_content: &mut R,
 ) {
+    // Cached packfile refs
+    let mut pack_cache = HashMap::new();
+
+    // Dump the sqlite db data so we can view what it is
+    println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");
+    walk_files(
+        index_content,
+        map_content,
+        key,
+        |path, perm, pack, hash| {
+            println!("HASH: {:?}", hash);
+            println!("\tPACK: {:?}", pack);
+
+            // Find or load the packfile
+            if !pack_cache.contains_key(&pack) {
+                println!("\t\tLoading: {:?}", pack);
+
+                let mut pack_read = remote.read(&pack).unwrap();
+                let pack_file = PackOut::load(&mut pack_read, key);
+
+                pack_cache.insert(pack.clone(), pack_file);
+
+                // TODO: make this into a streaming read but for now copy data
+                let data: Vec<u8> = pack_cache
+                    .get(&pack)
+                    .unwrap()
+                    .find_hash(hash.clone())
+                    .unwrap();
+
+                // Process the data
+                let mut dec = crypto::decrypt(key, &data[..]).unwrap();
+                let mut und = Decoder::new(&mut dec).unwrap();
+                let content_hash = hash::hash(key, &mut und).unwrap();
+
+                println!("\tPATH: {:?}", path);
+                println!("\tPERM: {:?}", perm);
+
+                let is_same = hash == content_hash;
+                println!("\tSAME: {:5}", is_same);
+            }
+        },
+    );
 }
