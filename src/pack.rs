@@ -1,14 +1,14 @@
-use serde::Deserialize;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{copy, Read, Write};
 use zstd::stream::read::Decoder;
-use zstd::stream::read::Encoder;
 
 use crate::crypto;
 use crate::hash;
-use crate::ltvc::builder::LtvcBuilder;
-use crate::ltvc::reader::{LtvcEntry, LtvcReader};
+use crate::ltvc::indexing::HeaderIdx;
+use crate::ltvc::indexing::LtvcIndexing;
+use crate::ltvc::linear::EdatStream;
+use crate::ltvc::linear::Header;
+use crate::ltvc::linear::LtvcLinear;
 
 // TODO: set to 1gb at some point
 const PACK_SIZE: usize = 4 * 1024;
@@ -22,18 +22,7 @@ pub fn generate_pack_id() -> hash::Hash {
 
 pub struct PackBuilder<W: Write> {
     pub id: hash::Hash,
-    idx: Vec<ChunkIdx>,
-    inner: LtvcBuilder<W>,
-
-    // State bits
-    p_idx: usize,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ChunkIdx {
-    start_idx: usize,
-    length: usize,
-    hash: hash::Hash,
+    inner: LtvcIndexing<W>,
 }
 
 // TODO: implement drop to call finalize
@@ -45,49 +34,21 @@ struct ChunkIdx {
 //  to higher layer and just index on 'hash + part -> idx + len'
 impl<W: Write> PackBuilder<W> {
     pub fn new(id: hash::Hash, writer: W) -> Self {
-        let mut pack = PackBuilder {
+        PackBuilder {
             id,
-            idx: Vec::new(),
-            inner: LtvcBuilder::new(writer),
-            p_idx: 0,
-        };
-
-        // Start with the Archive Header (kinda serves as a magic bits)
-        pack.p_idx += pack.inner.write_ahdr(0x01).unwrap();
-        pack
+            inner: LtvcIndexing::new(writer),
+        }
     }
 
     pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) -> bool {
-        let f_idx = self.p_idx;
-
-        self.p_idx += self.inner.write_fhdr(&hash).unwrap();
-        self.p_idx += self.inner.write_edat(reader).unwrap();
-
-        self.idx.push(ChunkIdx {
-            start_idx: f_idx,
-            length: self.p_idx - f_idx,
-            hash,
-        });
-
-        self.p_idx >= PACK_SIZE
+        self.inner.append_file(hash, reader);
+        self.inner.get_size() >= PACK_SIZE
     }
 
     // TODO: should hash+hmac various data bits in a packfile
     // Store the hmac hash of the packfile in packfile + snapshot itself.
-    pub fn finalize(mut self, key: &crypto::Key) {
-        let f_idx = self.p_idx;
-
-        self.p_idx += self.inner.write_aidx().unwrap();
-
-        let index = bincode::serialize(&self.idx).unwrap();
-        let comp = Encoder::new(&index[..], 21).unwrap();
-        let mut enc = crypto::encrypt(key, comp).unwrap();
-
-        self.p_idx += self.inner.write_edat(&mut enc).unwrap();
-        self.p_idx += self.inner.write_aend(f_idx).unwrap();
-
-        // Flush to signal to the backend that its done
-        self.inner.into_inner().flush().unwrap();
+    pub fn finalize(self, key: &crypto::Key) {
+        self.inner.finalize(true, key);
     }
 }
 
@@ -96,62 +57,26 @@ impl<W: Write> PackBuilder<W> {
 // TODO: make it into an actual streaming/indexing packout but for now just buffer in ram
 pub struct PackOut {
     idx: HashMap<hash::Hash, Vec<u8>>,
-    _idx: Vec<ChunkIdx>,
-}
-
-// TODO: want to figure out how to make this more generic so that other files can take advantage
-// of the sorta state machine for ltvc reading
-#[derive(Debug)]
-enum Spo {
-    Start,
-    Ahdr,
-    Fhdr { hash: hash::Hash },
-    FhdrEdat,
-    Aidx,
-    AidxEdat,
-    Aend,
+    _idx: Vec<HeaderIdx>,
 }
 
 impl PackOut {
     pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
-        let mut ltvc = LtvcReader::new(reader);
+        let ltvc = LtvcLinear::new(reader);
         let mut idx: HashMap<hash::Hash, Vec<u8>> = HashMap::new();
-        let mut chunk_idx: Vec<ChunkIdx> = vec![];
-        let mut state = Spo::Start;
+        let mut chunk_idx: Vec<HeaderIdx> = vec![];
 
-        loop {
-            match (state, ltvc.next()) {
-                // Assert that the first entry is an Ahdr with 0x01 as version
-                (Spo::Start, Some(Ok(LtvcEntry::Ahdr { version }))) if version == 0x01 => {
-                    println!("\t\t\tAHDR 0x01");
-                    state = Spo::Ahdr;
-                }
-
-                // Assert that Fhdr follows the Ahdr, FhdrEdat
-                (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash })))
-                | (Spo::FhdrEdat, Some(Ok(LtvcEntry::Fhdr { hash }))) => {
-                    println!("\t\t\tFhdr <hash>");
-                    state = Spo::Fhdr { hash };
-                }
-
-                // Assert that Fhdr Edat follows the Fhdr
-                (Spo::Fhdr { hash }, Some(Ok(LtvcEntry::Edat { mut data }))) => {
+        for EdatStream { header, mut data } in ltvc {
+            match header {
+                Header::Fhdr { hash } => {
                     println!("\t\t\tFhdr Edat");
+
                     let mut out_data = vec![];
                     copy(&mut data, &mut out_data).unwrap();
 
                     idx.insert(hash, out_data);
-                    state = Spo::FhdrEdat;
                 }
-
-                // Assert that Aidx follows FhdrEdat
-                (Spo::FhdrEdat, Some(Ok(LtvcEntry::Aidx))) => {
-                    println!("\t\t\tAidx");
-                    state = Spo::Aidx;
-                }
-
-                // Assert that Aidx Edat follows Aidx
-                (Spo::Aidx, Some(Ok(LtvcEntry::Edat { mut data }))) => {
+                Header::Aidx => {
                     println!("\t\t\tAidx Edat");
                     let mut idx_buf: Vec<u8> = Vec::new();
                     let mut dec = crypto::decrypt(key, &mut data).unwrap();
@@ -161,23 +86,10 @@ impl PackOut {
                     // Deserialize the index
                     chunk_idx = bincode::deserialize(&idx_buf).unwrap();
                     println!("\t\t\t\tChunk len: {:?}", chunk_idx.len());
-                    state = Spo::AidxEdat;
                 }
 
-                // Assert that Aend follows AidxEdat
-                (Spo::AidxEdat, Some(Ok(LtvcEntry::Aend { idx: _ }))) => {
-                    println!("\t\t\tAend");
-                    state = Spo::Aend;
-                }
-
-                // Asserts that the iterator is terminated
-                (Spo::Aend, None) => break,
-
-                // Unhandled states
-                // TODO: improve debuggability
-                (s, None) => panic!("In state: {:?} unexpected end of iterator", s),
-                (s, Some(Err(_))) => panic!("In state: {:?} error on iterator", s),
-                (s, Some(Ok(_))) => panic!("In state: {:?} unknown LtvcEntry", s),
+                // Skip header we don't care for
+                _ => (),
             }
         }
 

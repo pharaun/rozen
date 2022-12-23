@@ -126,10 +126,11 @@
 //!
 //! **TODO**: Need to decide how to handle archive block without a `AIDX`. The pointer might be
 //! set to `0x00_00_00_00`
-pub mod builder;
+mod builder;
+pub mod indexing;
 pub mod linear;
 mod raw;
-pub mod reader;
+mod reader;
 
 // 1Kb EDAT frame buffer
 // TODO: to force ourself to handle sequence of EDAT for now use small

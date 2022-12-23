@@ -1,13 +1,13 @@
 use rusqlite as rs;
 
-use std::io::{copy, Read, Write};
+use std::io::{copy, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use zstd::stream::read::Decoder;
 use zstd::stream::read::Encoder;
 
 use rusqlite::Connection;
 
-use crate::ltvc::builder::LtvcBuilder;
+use crate::ltvc::indexing::LtvcIndexing;
 use crate::ltvc::linear::EdatStream;
 use crate::ltvc::linear::Header;
 use crate::ltvc::linear::LtvcLinear;
@@ -93,22 +93,22 @@ impl SqlDb {
     fn unload<W: Write>(self, header: UnloadType, key: &crypto::Key, writer: W) {
         self.conn.close().unwrap();
 
-        let mut ltvc = LtvcBuilder::new(writer);
-        ltvc.write_ahdr(0x01).unwrap();
-
-        match header {
-            UnloadType::Shdr => ltvc.write_shdr().unwrap(),
-            UnloadType::Pidx => ltvc.write_pidx().unwrap(),
-        };
+        let mut ltvc = LtvcIndexing::new(writer);
 
         let mut db_file = self.db_tmp.into_file();
+
+        let content_hash = hash::hash(key, &mut db_file).unwrap();
+        db_file.seek(SeekFrom::Start(0)).unwrap();
+
         let comp = Encoder::new(&mut db_file, 21).unwrap();
         let mut enc = crypto::encrypt(key, comp).unwrap();
 
-        ltvc.write_edat(&mut enc).unwrap();
-        ltvc.write_aend(0x00_00_00_00).unwrap();
+        match header {
+            UnloadType::Shdr => ltvc.append_snapshot(content_hash, &mut enc),
+            UnloadType::Pidx => ltvc.append_pack_index(content_hash, &mut enc),
+        }
 
-        ltvc.into_inner().flush().unwrap();
+        ltvc.finalize(false, key);
     }
 }
 
