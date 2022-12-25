@@ -4,6 +4,7 @@ use zstd::stream::read::Decoder;
 
 use crate::crypto;
 use crate::hash;
+use crate::key;
 use crate::ltvc::indexing::HeaderIdx;
 use crate::ltvc::indexing::LtvcIndexing;
 use crate::ltvc::linear::EdatStream;
@@ -16,7 +17,7 @@ const PACK_SIZE: usize = 4 * 1024;
 // TODO: do this better - should be a typed pseudo hash instead of a fake hash
 pub fn generate_pack_id() -> hash::Hash {
     // Use a crypto grade random key for the packfile-id
-    let id = crypto::gen_key();
+    let id = key::gen_key();
     hash::Hash::from(id.0)
 }
 
@@ -47,7 +48,7 @@ impl<W: Write> PackBuilder<W> {
 
     // TODO: should hash+hmac various data bits in a packfile
     // Store the hmac hash of the packfile in packfile + snapshot itself.
-    pub fn finalize(self, key: &crypto::Key) {
+    pub fn finalize(self, key: &key::Key) {
         self.inner.finalize(true, key);
     }
 }
@@ -61,7 +62,7 @@ pub struct PackOut {
 }
 
 impl PackOut {
-    pub fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
+    pub fn load<R: Read>(reader: &mut R, key: &key::Key) -> Self {
         let ltvc = LtvcLinear::new(reader);
         let mut idx: HashMap<hash::Hash, Vec<u8>> = HashMap::new();
         let mut chunk_idx: Vec<HeaderIdx> = vec![];

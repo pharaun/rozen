@@ -1,8 +1,8 @@
 use ignore::WalkBuilder;
 
+use clap::Parser;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
-use clap::Parser;
 
 mod remote;
 use crate::remote::Remote;
@@ -12,11 +12,11 @@ use crate::cli::Cli;
 use crate::cli::Commands;
 use crate::cli::Config;
 
-mod key;
 mod buf;
 mod cas;
 mod crypto;
 mod hash;
+mod key;
 mod ltvc;
 mod pack;
 mod snapshot;
@@ -27,7 +27,7 @@ fn main() {
 
     // Per run key
     // TODO: bad news, should have separate key, one for encryption, and one for hmac
-    let key = crypto::gen_key();
+    let key = key::gen_key();
 
     // Parse the cli
     let cli = Cli::parse();
@@ -85,7 +85,7 @@ fn main() {
     match &cli.command {
         Some(Commands::List) => {
             panic!("listing");
-        },
+        }
         Some(Commands::Append { name: _ }) => {
             // Store indexer + Map
             let mut index_content = remote.write_multi_filename(&index_filename).unwrap();
@@ -110,10 +110,10 @@ fn main() {
             let mut map_content = remote.read_filename(&map_filename).unwrap();
 
             snapshot::fetch(&key, &mut remote, &mut index_content, &mut map_content);
-        },
+        }
         Some(Commands::Fetch { name }) => {
             panic!("Fetch: {}", name);
-        },
+        }
         None => (),
     }
 }

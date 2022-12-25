@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::fmt;
 use std::io::{copy, Read};
 
-use crate::crypto;
+use crate::key;
 use std::hash::Hash as StdHash;
 use std::hash::Hasher as StdHasher;
 use twox_hash::XxHash32;
@@ -43,7 +43,7 @@ pub struct Hash(blake3::Hash);
 // 2. Index - I type
 // 3. Packfile - P Type
 // 4. Mapper - M Type
-pub fn hash<R: Read>(key: &crypto::Key, data: &mut R) -> Result<Hash, std::io::Error> {
+pub fn hash<R: Read>(key: &key::Key, data: &mut R) -> Result<Hash, std::io::Error> {
     let mut hash = blake3::Hasher::new_keyed(&key.0);
     copy(data, &mut hash)?;
     Ok(Hash(hash.finalize()))

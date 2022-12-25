@@ -107,7 +107,7 @@ mod test_ltvc_raw_iterator {
     use std::io::{Cursor, Seek, SeekFrom};
 
     fn test_hash() -> hash::Hash {
-        let id = crypto::gen_key();
+        let id = key::gen_key();
         hash::Hash::from(id.0)
     }
 

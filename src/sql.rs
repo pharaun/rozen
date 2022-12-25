@@ -14,6 +14,7 @@ use crate::ltvc::linear::LtvcLinear;
 
 use crate::crypto;
 use crate::hash;
+use crate::key;
 
 // TODO:
 // - Figure out a better implementation, the sqlite is a shared resource, but we want
@@ -65,7 +66,7 @@ impl SqlDb {
             .unwrap();
     }
 
-    fn load<R: Read>(reader: &mut R, key: &crypto::Key) -> Self {
+    fn load<R: Read>(reader: &mut R, key: &key::Key) -> Self {
         let ltvc = LtvcLinear::new(reader);
 
         for EdatStream { header, data } in ltvc {
@@ -90,7 +91,7 @@ impl SqlDb {
         panic!("Did not find Shdr or Pidx in the stream!");
     }
 
-    fn unload<W: Write>(self, header: UnloadType, key: &crypto::Key, writer: W) {
+    fn unload<W: Write>(self, header: UnloadType, key: &key::Key, writer: W) {
         self.conn.close().unwrap();
 
         let mut ltvc = LtvcIndexing::new(writer);
@@ -133,13 +134,13 @@ impl Index {
         Index { db }
     }
 
-    pub fn load<R: Read>(index: &mut R, key: &crypto::Key) -> Self {
+    pub fn load<R: Read>(index: &mut R, key: &key::Key) -> Self {
         Index {
             db: SqlDb::load(index, key),
         }
     }
 
-    pub fn unload<W: Write>(self, key: &crypto::Key, writer: W) {
+    pub fn unload<W: Write>(self, key: &key::Key, writer: W) {
         self.db.unload(UnloadType::Shdr, key, writer);
     }
 
@@ -186,13 +187,13 @@ impl Map {
         Map { db }
     }
 
-    pub fn load<R: Read>(index: &mut R, key: &crypto::Key) -> Self {
+    pub fn load<R: Read>(index: &mut R, key: &key::Key) -> Self {
         Map {
             db: SqlDb::load(index, key),
         }
     }
 
-    pub fn unload<W: Write>(self, key: &crypto::Key, writer: W) {
+    pub fn unload<W: Write>(self, key: &key::Key, writer: W) {
         self.db.unload(UnloadType::Pidx, key, writer);
     }
 
@@ -215,7 +216,7 @@ impl Map {
     }
 }
 
-pub fn walk_files<R, F>(index: &mut R, map: &mut R, key: &crypto::Key, mut f: F)
+pub fn walk_files<R, F>(index: &mut R, map: &mut R, key: &key::Key, mut f: F)
 where
     F: FnMut(&str, u32, hash::Hash, hash::Hash),
     R: Read,

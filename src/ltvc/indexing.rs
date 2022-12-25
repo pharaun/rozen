@@ -5,6 +5,7 @@ use zstd::stream::read::Encoder;
 
 use crate::crypto;
 use crate::hash;
+use crate::key;
 use crate::ltvc::builder::LtvcBuilder;
 
 // TODO: add header type, for initial impl this is Fidx only
@@ -82,7 +83,7 @@ impl<W: Write> LtvcIndexing<W> {
         });
     }
 
-    pub fn finalize(mut self, append_aidx: bool, key: &crypto::Key) {
+    pub fn finalize(mut self, append_aidx: bool, key: &key::Key) {
         if append_aidx {
             let a_idx = self.idx;
 

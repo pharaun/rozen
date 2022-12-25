@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use crate::cas::ObjectStore;
 use crate::crypto;
 use crate::hash;
+use crate::key;
 use crate::pack::PackOut;
 use crate::remote::Remote;
 use crate::sql::walk_files;
@@ -23,7 +24,7 @@ use crate::sql::Index;
 //      then the queue can then manage "whole" or "chunked" or "chunked+delta" for processing
 //      before it ships it into the packfile possibly
 pub fn append<B: Remote, W: Write>(
-    key: &crypto::Key,
+    key: &key::Key,
     remote: &mut B,
     index_content: W,
     map_content: W,
@@ -85,7 +86,7 @@ pub fn append<B: Remote, W: Write>(
 }
 
 pub fn fetch<B: Remote, R: Read>(
-    key: &crypto::Key,
+    key: &key::Key,
     remote: &mut B,
     index_content: &mut R,
     map_content: &mut R,

@@ -2,13 +2,11 @@ use std::io::Read;
 
 use thiserror::Error;
 
-use sodiumoxide::crypto::secretstream;
 use sodiumoxide::crypto::secretstream::{Header, Pull, Push, Stream, Tag, ABYTES};
-
-pub use sodiumoxide::crypto::secretstream::Key;
 
 use crate::buf::fill_buf;
 use crate::buf::flush_buf;
+use crate::key;
 
 // 8Kb encryption frame buffer
 const CHUNK_SIZE: usize = 8 * 1024;
@@ -37,10 +35,6 @@ pub fn init() -> CResult<()> {
     sodiumoxide::init().map_err(|_| CryptoError::Init)
 }
 
-pub fn gen_key() -> Key {
-    secretstream::gen_key()
-}
-
 pub struct Crypter<R, E> {
     reader: R,
     engine: E,
@@ -63,7 +57,7 @@ pub struct Crypter<R, E> {
 //
 //     - Use the phash (file HMAC) for additional data with the encryption to ensure that
 //     the encrypted data matches the phash
-pub fn encrypt<R: Read>(key: &Key, reader: R) -> CResult<Crypter<R, EncEngine>> {
+pub fn encrypt<R: Read>(key: &key::Key, reader: R) -> CResult<Crypter<R, EncEngine>> {
     let (stream, header) = Stream::init_push(key).map_err(|_| CryptoError::InitPush)?;
     let engine = EncEngine(stream);
 
@@ -82,7 +76,7 @@ pub fn encrypt<R: Read>(key: &Key, reader: R) -> CResult<Crypter<R, EncEngine>> 
     })
 }
 
-pub fn decrypt<R: Read>(key: &Key, mut reader: R) -> CResult<Crypter<R, DecEngine>> {
+pub fn decrypt<R: Read>(key: &key::Key, mut reader: R) -> CResult<Crypter<R, DecEngine>> {
     // Read out the header
     let mut dheader: [u8; 24] = [0; 24];
     reader.read_exact(&mut dheader)?;
@@ -204,7 +198,7 @@ mod test_encrypt_decrypt_roundtrip {
 
     #[test]
     fn small_data_roundtrip() {
-        let key = gen_key();
+        let key = key::gen_key();
         let data = b"Hello World!";
 
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
@@ -224,7 +218,7 @@ mod test_encrypt_decrypt_roundtrip {
 
     #[test]
     fn exactly_chunk_roundtrip() {
-        let key = gen_key();
+        let key = key::gen_key();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -254,7 +248,7 @@ mod test_encrypt_decrypt_roundtrip {
 
     #[test]
     fn big_data_roundtrip() {
-        let key = gen_key();
+        let key = key::gen_key();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -300,7 +294,7 @@ mod test_crypt_read {
 
     #[test]
     fn small_data_roundtrip() {
-        let key = gen_key();
+        let key = key::gen_key();
         let data = b"Hello World!";
 
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
@@ -330,7 +324,7 @@ mod test_crypt_read {
 
     #[test]
     fn big_data_roundtrip() {
-        let key = gen_key();
+        let key = key::gen_key();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -383,7 +377,7 @@ mod test_crypt_read {
 
     #[test]
     fn awkward_write_final_buf() {
-        let key = gen_key();
+        let key = key::gen_key();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 

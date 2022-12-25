@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use serde::Deserialize;
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
@@ -25,14 +25,14 @@ pub enum Commands {
     Append {
         /// Set a custom name, otherwise datetime is the default
         #[arg(short, long)]
-        name: Option<String>
+        name: Option<String>,
     },
 
     /// Fetch a snapshot from remote
     Fetch {
         /// The name of the snapshot to fetch
-        name: String
-    }
+        name: String,
+    },
 }
 
 // Configuration
@@ -59,4 +59,3 @@ pub struct Source {
 pub enum SourceType {
     AppendOnly,
 }
-
