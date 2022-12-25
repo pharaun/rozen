@@ -1,12 +1,18 @@
 use ignore::WalkBuilder;
 
-use serde::Deserialize;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use clap::Parser;
 
 mod remote;
 use crate::remote::Remote;
 
+mod cli;
+use crate::cli::Cli;
+use crate::cli::Commands;
+use crate::cli::Config;
+
+mod key;
 mod buf;
 mod cas;
 mod crypto;
@@ -16,31 +22,6 @@ mod pack;
 mod snapshot;
 mod sql;
 
-// Configuration
-// At a later time honor: https://aws.amazon.com/blogs/security/a-new-and-standardized-way-to-manage-credentials-in-the-aws-sdks/
-// envy = "0.4.2" - for grabbing the env vars via serde
-#[derive(Deserialize, Debug)]
-struct Config {
-    symlink: bool,
-    same_fs: bool,
-
-    sources: Vec<Source>,
-}
-
-#[derive(Deserialize, Debug)]
-struct Source {
-    include: Vec<String>,
-    exclude: Vec<String>,
-
-    #[serde(rename = "type")]
-    source_type: SourceType,
-}
-
-#[derive(Deserialize, Debug, Clone, Copy)]
-enum SourceType {
-    AppendOnly,
-}
-
 fn main() {
     crypto::init().unwrap();
 
@@ -48,22 +29,28 @@ fn main() {
     // TODO: bad news, should have separate key, one for encryption, and one for hmac
     let key = crypto::gen_key();
 
-    let config: Config = toml::from_str(
-        r#"
-        symlink = true
-        same_fs = true
+    // Parse the cli
+    let cli = Cli::parse();
 
-        [[sources]]
-            include = ["docs"]
-            exclude = ["*.pyc"]
-            type = "AppendOnly"
+    let config: Config = if cli.config.is_none() {
+        toml::from_str(
+            r#"
+            symlink = true
+            same_fs = true
 
-    "#,
-    )
-    .unwrap();
+            [[sources]]
+                include = ["docs"]
+                exclude = ["*.pyc"]
+                type = "AppendOnly"
 
+        "#,
+        )
+        .unwrap()
+    } else {
+        panic!("Config file was set, not supported yet");
+    };
     println!("CONFIG:");
-    println!("{:?}", config);
+    println!("\t{:?}", config);
 
     let target = config.sources.get(0).unwrap().include.get(0).unwrap();
     let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
@@ -89,32 +76,44 @@ fn main() {
     let datetime = OffsetDateTime::now_utc();
     let dt_fmt = datetime.format(&Rfc3339).unwrap();
 
-    // Store indexer + Map
     let index_filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
     println!("Write INDEX: {:?}", index_filename);
-    let mut index_content = remote.write_multi_filename(&index_filename).unwrap();
 
     let map_filename = format!("MAP-{}.sqlite.zst", dt_fmt);
     println!("Write MAP: {:?}", map_filename);
-    let mut map_content = remote.write_multi_filename(&map_filename).unwrap();
 
-    // Perform an appending snapshot
-    snapshot::append(
-        &key,
-        &mut remote,
-        &mut index_content,
-        &mut map_content,
-        WalkBuilder::new(target)
-            .follow_links(config.symlink)
-            .standard_filters(false)
-            .same_file_system(config.same_fs)
-            .sort_by_file_name(|a, b| a.cmp(b))
-            .build(),
-    );
+    match &cli.command {
+        Some(Commands::List) => {
+            panic!("listing");
+        },
+        Some(Commands::Append { name: _ }) => {
+            // Store indexer + Map
+            let mut index_content = remote.write_multi_filename(&index_filename).unwrap();
+            let mut map_content = remote.write_multi_filename(&map_filename).unwrap();
 
-    // Indexer
-    let mut index_content = remote.read_filename(&index_filename).unwrap();
-    let mut map_content = remote.read_filename(&map_filename).unwrap();
+            // Perform an appending snapshot
+            snapshot::append(
+                &key,
+                &mut remote,
+                &mut index_content,
+                &mut map_content,
+                WalkBuilder::new(target)
+                    .follow_links(config.symlink)
+                    .standard_filters(false)
+                    .same_file_system(config.same_fs)
+                    .sort_by_file_name(|a, b| a.cmp(b))
+                    .build(),
+            );
 
-    snapshot::fetch(&key, &mut remote, &mut index_content, &mut map_content);
+            // TODO: REMOVE
+            let mut index_content = remote.read_filename(&index_filename).unwrap();
+            let mut map_content = remote.read_filename(&map_filename).unwrap();
+
+            snapshot::fetch(&key, &mut remote, &mut index_content, &mut map_content);
+        },
+        Some(Commands::Fetch { name }) => {
+            panic!("Fetch: {}", name);
+        },
+        None => (),
+    }
 }
