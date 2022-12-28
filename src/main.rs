@@ -58,8 +58,8 @@ fn main() {
     let _stype = config.sources.get(0).unwrap().source_type;
 
     // In memory remote for data storage
-    //let mut remote = remote::mem::MemoryVFS::new(Some("test.sqlite"));
-    let mut remote = remote::mem::MemoryVFS::new(None);
+    let mut remote = remote::mem::MemoryVFS::new(Some("test.sqlite"));
+    let mut _remote = remote::mem::MemoryVFS::new(None);
 
     // Build a s3 remote here
     let mut _remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333").unwrap();

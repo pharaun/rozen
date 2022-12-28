@@ -27,7 +27,7 @@ impl MemoryVFS {
         // Setup the db
         conn.execute_batch(
             "BEGIN;
-             CREATE TABLE blob (
+             CREATE TABLE IF NOT EXISTS blob (
                 key VARCHAR NOT NULL,
                 typ VARCHAR NOT NULL,
                 chunk INTEGER NOT NULL,

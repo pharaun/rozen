@@ -69,8 +69,6 @@ impl Remote for S3 {
         let mut buf = Vec::new();
         copy(&mut reader, &mut buf).unwrap();
 
-        println!("S3-write: {:?}", buf.len());
-
         let stream = ByteStream::from(buf);
 
         let call = self
@@ -155,9 +153,6 @@ const BUFFER_TARGET: usize = 6 * 1024 * 1024;
 
 impl Write for S3Multi {
     fn write(&mut self, in_buf: &[u8]) -> Result<usize, std::io::Error> {
-        println!("S3-multi-write: i_buf: {:?}", in_buf.len());
-        println!("S3-multi-write: t_buf: {:?}", self.t_buf.len());
-
         // append to t_buf
         self.t_buf.extend(in_buf);
         self.upload_part(false);
@@ -190,12 +185,8 @@ impl Write for S3Multi {
 
 impl S3Multi {
     fn upload_part(&mut self, last: bool) {
-        println!("S3-multi-write: last: {:?}", last);
-
         // If last part to upload *or* at least 6mb accumulated upload
         if (last && !self.t_buf.is_empty()) || self.t_buf.len() >= BUFFER_TARGET {
-            println!("S3-multi-write: UPLOADING");
-
             // Swap the self.t_buf with a empty one and own it
             let mut t_buf = Vec::new();
             mem::swap(&mut self.t_buf, &mut t_buf);
