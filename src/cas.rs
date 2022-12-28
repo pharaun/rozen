@@ -3,6 +3,7 @@ use crate::key;
 use crate::pack;
 use crate::pack::PackBuilder;
 use crate::remote::Remote;
+use crate::remote::Typ;
 use crate::sql::Map;
 use std::io::Read;
 use std::io::Write;
@@ -81,7 +82,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         // it as it is
         let mut temp_pack = {
             let pack_id = pack::generate_pack_id();
-            let multiwrite = self.remote.write_multi(&pack_id).unwrap();
+            let multiwrite = self.remote.write_multi(Typ::Pack, &pack_id).unwrap();
             PackBuilder::new(pack_id, multiwrite)
         };
         let pack_id = temp_pack.id.clone();
@@ -111,7 +112,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         //     backend
         let temp_pack = self.current_pack.get_or_insert_with(|| {
             let pack_id = pack::generate_pack_id();
-            let multiwrite = self.remote.write_multi(&pack_id).unwrap();
+            let multiwrite = self.remote.write_multi(Typ::Pack, &pack_id).unwrap();
             PackBuilder::new(pack_id, multiwrite)
         });
         let pack_id = temp_pack.id.clone();

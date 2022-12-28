@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 use crate::buf::flush_buf;
 use crate::remote::Remote;
+use crate::remote::Typ;
 
 pub struct S3 {
     client: Rc<Client>,
@@ -38,8 +39,13 @@ impl S3 {
 }
 
 impl Remote for S3 {
-    fn list_keys(&self) -> Result<Box<dyn Iterator<Item = String>>, String> {
-        let call = self.client.list_objects_v2().bucket("test").send();
+    fn list_keys(&self, typ: Typ) -> Result<Box<dyn Iterator<Item = String>>, String> {
+        let call = self
+            .client
+            .list_objects_v2()
+            .bucket("test")
+            .prefix(typ.to_string())
+            .send();
 
         let res = self.rt.block_on(async { call.await }).unwrap();
         let contents = res.contents.unwrap();
@@ -49,7 +55,12 @@ impl Remote for S3 {
 
     // TODO: this and the multipart api needs to also do various checksums to pass on to s3
     // so that the s3 can verify the data integrity server-end
-    fn write_filename<R: Read>(&self, filename: &str, mut reader: R) -> Result<(), String> {
+    fn write_filename<R: Read>(
+        &self,
+        typ: Typ,
+        filename: &str,
+        mut reader: R,
+    ) -> Result<(), String> {
         // TODO: Less bad, still buffer it all in memory, but we can at least
         // manage the read here so we should be able to do something reasonable
         // here at some point
@@ -65,7 +76,7 @@ impl Remote for S3 {
             .put_object()
             .body(stream)
             .bucket("test")
-            .key(filename)
+            .key(format!("{}/{}", typ, filename))
             .send();
 
         let _res = self.rt.block_on(async { call.await }).unwrap();
@@ -75,9 +86,14 @@ impl Remote for S3 {
 
     // TODO: if this is a multipart uploaded it could be possible to fetch each part and
     // verify its checksum and so on before returning it to the backup system?
-    fn read_filename(&mut self, filename: &str) -> Result<Box<dyn Read>, String> {
+    fn read_filename(&mut self, typ: Typ, filename: &str) -> Result<Box<dyn Read>, String> {
         // Do s3 dance to fetch a object and buffer it locally
-        let call = self.client.get_object().bucket("test").key(filename).send();
+        let call = self
+            .client
+            .get_object()
+            .bucket("test")
+            .key(format!("{}/{}", typ, filename))
+            .send();
 
         let res = self.rt.block_on(async { call.await }).unwrap();
 
@@ -95,12 +111,12 @@ impl Remote for S3 {
         }))
     }
 
-    fn write_multi_filename(&self, key: &str) -> Result<Box<dyn Write>, String> {
+    fn write_multi_filename(&self, typ: Typ, key: &str) -> Result<Box<dyn Write>, String> {
         let call = self
             .client
             .create_multipart_upload()
             .bucket("test")
-            .key(key)
+            .key(format!("{}/{}", typ, key))
             .send();
 
         let res = self.rt.block_on(async { call.await }).unwrap();
@@ -113,6 +129,7 @@ impl Remote for S3 {
             part: Vec::new(),
             part_id: 1,
             t_buf: Vec::new(),
+            typ,
         }))
     }
 }
@@ -127,6 +144,7 @@ struct S3Multi {
 
     // Buffer it till 6mb then upload it as a new part
     t_buf: Vec<u8>,
+    typ: Typ,
 }
 
 const BUFFER_TARGET: usize = 6 * 1024 * 1024;
@@ -152,7 +170,7 @@ impl Write for S3Multi {
             .client
             .complete_multipart_upload()
             .bucket("test")
-            .key(&self.key)
+            .key(format!("{}/{}", &self.typ.to_string(), &self.key))
             .upload_id(self.id.clone())
             .multipart_upload(
                 CompletedMultipartUpload::builder()
@@ -184,7 +202,7 @@ impl S3Multi {
                 .upload_part()
                 .body(stream)
                 .bucket("test")
-                .key(&self.key)
+                .key(format!("{}/{}", &self.typ.to_string(), &self.key))
                 .upload_id(self.id.clone())
                 .part_number(self.part_id)
                 .send();

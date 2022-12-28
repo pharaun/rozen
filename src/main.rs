@@ -6,6 +6,7 @@ use time::OffsetDateTime;
 
 mod remote;
 use crate::remote::Remote;
+use crate::remote::Typ;
 
 mod cli;
 use crate::cli::Cli;
@@ -84,12 +85,41 @@ fn main() {
 
     match &cli.command {
         Some(Commands::List) => {
-            panic!("listing");
+            // Store indexer + Map
+            let mut index_content = remote
+                .write_multi_filename(Typ::Index, &index_filename)
+                .unwrap();
+            let mut map_content = remote
+                .write_multi_filename(Typ::Map, &map_filename)
+                .unwrap();
+
+            // Perform an appending snapshot
+            snapshot::append(
+                &key,
+                &mut remote,
+                &mut index_content,
+                &mut map_content,
+                WalkBuilder::new(target)
+                    .follow_links(config.symlink)
+                    .standard_filters(false)
+                    .same_file_system(config.same_fs)
+                    .sort_by_file_name(|a, b| a.cmp(b))
+                    .build(),
+            );
+
+            // TODO: remove prior ^ is for populating something for the list snapshot to work
+            for key in remote.list_keys(Typ::Index).unwrap() {
+                println!("Key: {:?}", key);
+            }
         }
         Some(Commands::Append { name: _ }) => {
             // Store indexer + Map
-            let mut index_content = remote.write_multi_filename(&index_filename).unwrap();
-            let mut map_content = remote.write_multi_filename(&map_filename).unwrap();
+            let mut index_content = remote
+                .write_multi_filename(Typ::Index, &index_filename)
+                .unwrap();
+            let mut map_content = remote
+                .write_multi_filename(Typ::Map, &map_filename)
+                .unwrap();
 
             // Perform an appending snapshot
             snapshot::append(
@@ -106,8 +136,8 @@ fn main() {
             );
 
             // TODO: REMOVE
-            let mut index_content = remote.read_filename(&index_filename).unwrap();
-            let mut map_content = remote.read_filename(&map_filename).unwrap();
+            let mut index_content = remote.read_filename(Typ::Index, &index_filename).unwrap();
+            let mut map_content = remote.read_filename(Typ::Map, &map_filename).unwrap();
 
             snapshot::fetch(&key, &mut remote, &mut index_content, &mut map_content);
         }

@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use crate::buf::fill_buf;
 use crate::remote::Remote;
+use crate::remote::Typ;
 
 #[allow(clippy::identity_op)]
 const CHUNK_SIZE: usize = 1 * 1024;
@@ -28,9 +29,10 @@ impl MemoryVFS {
             "BEGIN;
              CREATE TABLE blob (
                 key VARCHAR NOT NULL,
+                typ VARCHAR NOT NULL,
                 chunk INTEGER NOT NULL,
                 content BLOB NOT NULL,
-                UNIQUE(key, chunk)
+                UNIQUE(key, typ, chunk)
              );
              COMMIT;",
         )
@@ -43,10 +45,17 @@ impl MemoryVFS {
 }
 
 impl Remote for MemoryVFS {
-    fn list_keys(&self) -> Result<Box<dyn Iterator<Item = String>>, String> {
-        let mut stmt = self.conn.prepare("SELECT DISTINCT key FROM blob").unwrap();
+    fn list_keys(&self, typ: Typ) -> Result<Box<dyn Iterator<Item = String>>, String> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT DISTINCT key
+                 FROM blob
+                 WHERE typ = ?",
+            )
+            .unwrap();
         Ok(Box::new(
-            stmt.query_map([], |row| {
+            stmt.query_map(rs::params![typ.to_string()], |row| {
                 let x: String = row.get(0).unwrap();
                 Ok(x)
             })
@@ -57,23 +66,24 @@ impl Remote for MemoryVFS {
         ))
     }
 
-    fn write_filename<R: Read>(&self, filename: &str, reader: R) -> Result<(), String> {
-        write_filename(self.conn.clone(), filename, reader)
+    fn write_filename<R: Read>(&self, typ: Typ, filename: &str, reader: R) -> Result<(), String> {
+        write_filename(self.conn.clone(), typ, filename, reader)
     }
 
-    fn read_filename(&mut self, filename: &str) -> Result<Box<dyn Read>, String> {
+    fn read_filename(&mut self, typ: Typ, filename: &str) -> Result<Box<dyn Read>, String> {
         let mut stmt = self
             .conn
             .prepare_cached(
                 "SELECT content
-             FROM blob
-             WHERE key = ?
-             ORDER BY chunk ASC",
+                 FROM blob
+                 WHERE key = ?
+                 AND typ = ?
+                 ORDER BY chunk ASC",
             )
             .unwrap();
 
         Ok(Box::new(IterRead::new(
-            stmt.query_map(rs::params![filename], |row| {
+            stmt.query_map(rs::params![filename, typ.to_string()], |row| {
                 let x: Vec<u8> = row.get(0).unwrap();
                 Ok(x)
             })
@@ -84,11 +94,12 @@ impl Remote for MemoryVFS {
         )))
     }
 
-    fn write_multi_filename(&self, key: &str) -> Result<Box<dyn Write>, String> {
+    fn write_multi_filename(&self, typ: Typ, key: &str) -> Result<Box<dyn Write>, String> {
         Ok(Box::new(VFSWrite {
             conn: self.conn.clone(),
             key: key.to_string(),
             t_buf: Vec::new(),
+            typ,
         }))
     }
 }
@@ -97,6 +108,7 @@ struct VFSWrite {
     conn: Rc<Connection>,
     key: String,
     t_buf: Vec<u8>,
+    typ: Typ,
 }
 
 impl Write for VFSWrite {
@@ -108,21 +120,26 @@ impl Write for VFSWrite {
     // TODO: not sure if this is proper use of flush or if we should have a finalize call instead
     fn flush(&mut self) -> Result<(), std::io::Error> {
         let data = Cursor::new(self.t_buf.clone());
-        write_filename(self.conn.clone(), &self.key, data).unwrap();
+        write_filename(self.conn.clone(), self.typ, &self.key, data).unwrap();
         Ok(())
     }
 }
 
 fn write_filename<R: Read>(
     conn: Rc<Connection>,
+    typ: Typ,
     filename: &str,
     mut reader: R,
 ) -> Result<(), String> {
     // Delete any key chunks that exists before
-    conn.prepare_cached("DELETE FROM blob WHERE key = ?")
-        .unwrap()
-        .execute(rs::params![filename])
-        .unwrap();
+    conn.prepare_cached(
+        "DELETE FROM blob
+         WHERE key = ?
+         AND typ = ?",
+    )
+    .unwrap()
+    .execute(rs::params![filename, typ.to_string()])
+    .unwrap();
 
     // Insert new data
     let mut chunk_idx: i64 = 0;
@@ -136,14 +153,19 @@ fn write_filename<R: Read>(
                 let mut file_stmt = conn
                     .prepare_cached(
                         "INSERT INTO blob
-                     (key, chunk, content)
-                     VALUES
-                     (?, ?, ?)",
+                         (key, typ, chunk, content)
+                         VALUES
+                         (?, ?, ?, ?)",
                     )
                     .unwrap();
 
                 file_stmt
-                    .execute(rs::params![filename, chunk_idx, &in_buf[..len],])
+                    .execute(rs::params![
+                        filename,
+                        typ.to_string(),
+                        chunk_idx,
+                        &in_buf[..len],
+                    ])
                     .unwrap();
 
                 chunk_idx += 1;
@@ -157,6 +179,7 @@ fn write_filename<R: Read>(
 mod tests {
     use crate::remote::mem::MemoryVFS;
     use crate::remote::mem::Remote;
+    use crate::remote::Typ;
     use std::io::Cursor;
 
     #[test]
@@ -166,10 +189,10 @@ mod tests {
 
         let data: &[u8; 9] = b"Test Data";
         let b = Cursor::new(data);
-        back.write_filename(key, b).unwrap();
+        back.write_filename(Typ::Pack, key, b).unwrap();
 
         let mut val = String::new();
-        back.read_filename(key)
+        back.read_filename(Typ::Pack, key)
             .unwrap()
             .read_to_string(&mut val)
             .unwrap();
@@ -184,14 +207,14 @@ mod tests {
 
         let data: &[u8; 9] = b"Test Data";
         let b = Cursor::new(data);
-        back.write_filename(key, b).unwrap();
+        back.write_filename(Typ::Pack, key, b).unwrap();
 
         let data: &[u8; 9] = b"Data Test";
         let b = Cursor::new(data);
-        back.write_filename(key, b).unwrap();
+        back.write_filename(Typ::Pack, key, b).unwrap();
 
         let mut val = String::new();
-        back.read_filename(key)
+        back.read_filename(Typ::Pack, key)
             .unwrap()
             .read_to_string(&mut val)
             .unwrap();

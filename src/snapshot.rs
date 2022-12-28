@@ -10,6 +10,7 @@ use crate::hash;
 use crate::key;
 use crate::pack::PackOut;
 use crate::remote::Remote;
+use crate::remote::Typ;
 use crate::sql::walk_files;
 use crate::sql::Index;
 
@@ -104,7 +105,7 @@ pub fn fetch<B: Remote, R: Read>(
         if !pack_cache.contains_key(&pack) {
             println!("\t\tLoading: {:?}", pack);
 
-            let mut pack_read = remote.read(&pack).unwrap();
+            let mut pack_read = remote.read(Typ::Pack, &pack).unwrap();
             let pack_file = PackOut::load(&mut pack_read, key);
 
             pack_cache.insert(pack.clone(), pack_file);

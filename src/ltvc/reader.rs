@@ -164,8 +164,8 @@ impl<R: Read> Iterator for LtvcReader<R> {
 #[cfg(test)]
 mod test_ltvc_iterator {
     use super::*;
-    use crate::crypto;
     use crate::hash;
+    use crate::key;
     use crate::ltvc::builder::LtvcBuilder;
     use crate::ltvc::CHUNK_SIZE;
     use std::io::{copy, Cursor, Seek, SeekFrom};
