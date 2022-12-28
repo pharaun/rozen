@@ -20,11 +20,12 @@ use crate::remote::Typ;
 pub struct S3 {
     client: Rc<Client>,
     rt: Rc<Runtime>,
+    bucket: String,
 }
 
 impl S3 {
     // TODO: have other creation endpoint that does not take endpoints
-    pub fn new_endpoint(endpoint: &'static str) -> Result<Self, Box<dyn Error>> {
+    pub fn new_endpoint(bucket: &str, endpoint: &'static str) -> Result<Self, Box<dyn Error>> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -34,6 +35,7 @@ impl S3 {
         Ok(S3 {
             client: Rc::new(client),
             rt: Rc::new(rt),
+            bucket: bucket.to_string(),
         })
     }
 }
@@ -43,7 +45,7 @@ impl Remote for S3 {
         let call = self
             .client
             .list_objects_v2()
-            .bucket("test")
+            .bucket(&self.bucket)
             .prefix(typ.to_string())
             .send();
 
@@ -75,7 +77,7 @@ impl Remote for S3 {
             .client
             .put_object()
             .body(stream)
-            .bucket("test")
+            .bucket(&self.bucket)
             .key(format!("{}/{}", typ, filename))
             .send();
 
@@ -91,7 +93,7 @@ impl Remote for S3 {
         let call = self
             .client
             .get_object()
-            .bucket("test")
+            .bucket(&self.bucket)
             .key(format!("{}/{}", typ, filename))
             .send();
 
@@ -115,7 +117,7 @@ impl Remote for S3 {
         let call = self
             .client
             .create_multipart_upload()
-            .bucket("test")
+            .bucket(&self.bucket)
             .key(format!("{}/{}", typ, key))
             .send();
 
@@ -126,6 +128,7 @@ impl Remote for S3 {
             rt: self.rt.clone(),
             key: key.to_string(),
             id: res.upload_id.unwrap(),
+            bucket: self.bucket.clone(),
             part: Vec::new(),
             part_id: 1,
             t_buf: Vec::new(),
@@ -139,6 +142,7 @@ struct S3Multi {
     rt: Rc<Runtime>,
     key: String,
     id: String,
+    bucket: String,
     part: Vec<CompletedPart>,
     part_id: i32,
 
@@ -169,7 +173,7 @@ impl Write for S3Multi {
         let call = self
             .client
             .complete_multipart_upload()
-            .bucket("test")
+            .bucket(&self.bucket)
             .key(format!("{}/{}", &self.typ.to_string(), &self.key))
             .upload_id(self.id.clone())
             .multipart_upload(
@@ -201,7 +205,7 @@ impl S3Multi {
                 .client
                 .upload_part()
                 .body(stream)
-                .bucket("test")
+                .bucket(&self.bucket)
                 .key(format!("{}/{}", &self.typ.to_string(), &self.key))
                 .upload_id(self.id.clone())
                 .part_number(self.part_id)

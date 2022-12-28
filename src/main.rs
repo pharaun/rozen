@@ -62,7 +62,7 @@ fn main() {
     let mut remote = remote::mem::MemoryVFS::new(None);
 
     // Build a s3 remote here
-    let mut _remote = remote::s3::S3::new_endpoint("http://localhost:8333").unwrap();
+    let mut _remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333").unwrap();
 
     // TODO: should name various things like Index getting its own hashkey
     //  * I-<timestamp> = index
