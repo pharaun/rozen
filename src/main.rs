@@ -23,6 +23,16 @@ mod pack;
 mod snapshot;
 mod sql;
 
+// TODO: should name various things like Index getting its own hashkey
+//  * I-<timestamp> = index
+//  * P-<rng>  = packfile (only one that isn't hash)
+//  * B-<hash> = raw blob (big files)
+// TODO: how to handle files larger than X size (ie S3 only allow file up to X for eg)
+//  * Do we want to support chunking, could possibly do it via
+//  * B-<hash>.p0
+//  * B-<hash>.p1
+//  * B-<hash>.p? - I'm not sure, could have B-<hash> -> metadata -> B-<hash>.p? but could
+//      also just always have the B-<hash> xor B-<hash>.p?
 fn main() {
     crypto::init().unwrap();
 
@@ -53,10 +63,6 @@ fn main() {
     println!("CONFIG:");
     println!("\t{:?}", config);
 
-    let target = config.sources.get(0).unwrap().include.get(0).unwrap();
-    let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
-    let _stype = config.sources.get(0).unwrap().source_type;
-
     // In memory remote for data storage
     let mut remote = remote::mem::MemoryVFS::new(Some("test.sqlite"));
     let mut _remote = remote::mem::MemoryVFS::new(None);
@@ -64,86 +70,80 @@ fn main() {
     // Build a s3 remote here
     let mut _remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333").unwrap();
 
-    // TODO: should name various things like Index getting its own hashkey
-    //  * I-<timestamp> = index
-    //  * P-<rng>  = packfile (only one that isn't hash)
-    //  * B-<hash> = raw blob (big files)
-    // TODO: how to handle files larger than X size (ie S3 only allow file up to X for eg)
-    //  * Do we want to support chunking, could possibly do it via
-    //  * B-<hash>.p0
-    //  * B-<hash>.p1
-    //  * B-<hash>.p? - I'm not sure, could have B-<hash> -> metadata -> B-<hash>.p? but could
-    //      also just always have the B-<hash> xor B-<hash>.p?
-    let datetime = OffsetDateTime::now_utc();
-    let dt_fmt = datetime.format(&Rfc3339).unwrap();
-
-    let index_filename = format!("INDEX-{}.sqlite.zst", dt_fmt);
-    println!("Write INDEX: {:?}", index_filename);
-
-    let map_filename = format!("MAP-{}.sqlite.zst", dt_fmt);
-    println!("Write MAP: {:?}", map_filename);
-
     match &cli.command {
         Some(Commands::List) => {
-            // Store indexer + Map
-            let mut index_content = remote
-                .write_multi_filename(Typ::Index, &index_filename)
-                .unwrap();
-            let mut map_content = remote
-                .write_multi_filename(Typ::Map, &map_filename)
-                .unwrap();
-
-            // Perform an appending snapshot
-            snapshot::append(
-                &key,
-                &mut remote,
-                &mut index_content,
-                &mut map_content,
-                WalkBuilder::new(target)
-                    .follow_links(config.symlink)
-                    .standard_filters(false)
-                    .same_file_system(config.same_fs)
-                    .sort_by_file_name(|a, b| a.cmp(b))
-                    .build(),
-            );
-
-            // TODO: remove prior ^ is for populating something for the list snapshot to work
-            for key in remote.list_keys(Typ::Index).unwrap() {
-                println!("Key: {:?}", key);
-            }
+            list(&mut remote);
         }
-        Some(Commands::Append { name: _ }) => {
-            // Store indexer + Map
-            let mut index_content = remote
-                .write_multi_filename(Typ::Index, &index_filename)
-                .unwrap();
-            let mut map_content = remote
-                .write_multi_filename(Typ::Map, &map_filename)
-                .unwrap();
-
-            // Perform an appending snapshot
-            snapshot::append(
-                &key,
-                &mut remote,
-                &mut index_content,
-                &mut map_content,
-                WalkBuilder::new(target)
-                    .follow_links(config.symlink)
-                    .standard_filters(false)
-                    .same_file_system(config.same_fs)
-                    .sort_by_file_name(|a, b| a.cmp(b))
-                    .build(),
-            );
-
-            // TODO: REMOVE
-            let mut index_content = remote.read_filename(Typ::Index, &index_filename).unwrap();
-            let mut map_content = remote.read_filename(Typ::Map, &map_filename).unwrap();
-
-            snapshot::fetch(&key, &mut remote, &mut index_content, &mut map_content);
+        Some(Commands::Append { name }) => {
+            append(&key, &config, &mut remote, name.clone());
         }
         Some(Commands::Fetch { name }) => {
-            panic!("Fetch: {}", name);
+            fetch(&key, &mut remote, name.to_string());
+        }
+        Some(Commands::Test) => {
+            println!("TEST ONLY");
+            let name = "TEST".to_string();
+
+            append(&key, &config, &mut remote, Some(name.clone()));
+            fetch(&key, &mut remote, name);
+            list(&mut remote);
         }
         None => (),
     }
+}
+
+fn list<B: Remote>(remote: &mut B) {
+    for key in remote.list_keys(Typ::Index).unwrap() {
+        println!("Key: {:?}", key);
+    }
+}
+
+fn append<B: Remote>(key: &key::Key, config: &cli::Config, remote: &mut B, name: Option<String>) {
+    let filename = match name {
+        Some(x) => x,
+        None => {
+            let datetime = OffsetDateTime::now_utc();
+            datetime.format(&Rfc3339).unwrap()
+        }
+    };
+
+    // Config bits
+    let target = config.sources.get(0).unwrap().include.get(0).unwrap();
+    let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
+    let _stype = config.sources.get(0).unwrap().source_type;
+
+    // Store indexer + Map
+    let index_filename = format!("INDEX-{}.sqlite.zst", filename);
+    let mut index_content = remote
+        .write_multi_filename(Typ::Index, &index_filename)
+        .unwrap();
+
+    let map_filename = format!("MAP-{}.sqlite.zst", filename);
+    let mut map_content = remote
+        .write_multi_filename(Typ::Map, &map_filename)
+        .unwrap();
+
+    // Perform an appending snapshot
+    snapshot::append(
+        key,
+        remote,
+        &mut index_content,
+        &mut map_content,
+        WalkBuilder::new(target)
+            .follow_links(config.symlink)
+            .standard_filters(false)
+            .same_file_system(config.same_fs)
+            .sort_by_file_name(|a, b| a.cmp(b))
+            .build(),
+    );
+}
+
+fn fetch<B: Remote>(key: &key::Key, remote: &mut B, name: String) {
+    let index_filename = format!("INDEX-{}.sqlite.zst", name);
+    let mut index_content = remote.read_filename(Typ::Index, &index_filename).unwrap();
+
+    let map_filename = format!("MAP-{}.sqlite.zst", name);
+    let mut map_content = remote.read_filename(Typ::Map, &map_filename).unwrap();
+
+    snapshot::fetch(key, remote, &mut index_content, &mut map_content);
 }

@@ -33,6 +33,9 @@ pub enum Commands {
         /// The name of the snapshot to fetch
         name: String,
     },
+
+    /// Test the entire lifecycle
+    Test,
 }
 
 // Configuration
