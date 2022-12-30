@@ -4,24 +4,14 @@ use clap::Parser;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-mod remote;
-use crate::remote::Remote;
-use crate::remote::Typ;
-
-mod cli;
-use crate::cli::Cli;
-use crate::cli::Commands;
-use crate::cli::Config;
-
-mod buf;
-mod cas;
-mod crypto;
-mod hash;
-mod key;
-mod ltvc;
-mod pack;
-mod snapshot;
-mod sql;
+use rozen::cli;
+use rozen::cli::Commands;
+use rozen::crypto;
+use rozen::key;
+use rozen::remote;
+use rozen::remote::Remote;
+use rozen::remote::Typ;
+use rozen::snapshot;
 
 // TODO: should name various things like Index getting its own hashkey
 //  * I-<timestamp> = index
@@ -41,9 +31,9 @@ fn main() {
     let key = key::gen_key();
 
     // Parse the cli
-    let cli = Cli::parse();
+    let cli = cli::Cli::parse();
 
-    let config: Config = if cli.config.is_none() {
+    let config: cli::Config = if cli.config.is_none() {
         toml::from_str(
             r#"
             symlink = true
