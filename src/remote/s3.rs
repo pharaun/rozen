@@ -1,6 +1,6 @@
 use aws_sdk_s3::model::CompletedMultipartUpload;
 use aws_sdk_s3::model::CompletedPart;
-use aws_sdk_s3::ByteStream;
+use aws_sdk_s3::types::ByteStream;
 use aws_sdk_s3::Client;
 use aws_sdk_s3::Endpoint;
 use bytes::Buf;
@@ -233,7 +233,7 @@ impl Read for S3Read {
 
 async fn connect(endpoint: &'static str) -> Client {
     let conf = aws_config::load_from_env().await;
-    let ep = Endpoint::immutable(Uri::from_static(endpoint));
+    let ep = Endpoint::immutable_uri(Uri::from_static(endpoint)).unwrap();
     let s3_conf = aws_sdk_s3::config::Builder::from(&conf)
         .endpoint_resolver(ep)
         .build();
