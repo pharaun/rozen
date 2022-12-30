@@ -4,8 +4,8 @@ use clap::Parser;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-use rozen::cli;
-use rozen::cli::Commands;
+mod cli;
+use crate::cli::Commands;
 use rozen::crypto;
 use rozen::key;
 use rozen::remote;

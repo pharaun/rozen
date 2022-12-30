@@ -1,6 +1,5 @@
 mod buf;
 mod cas;
-pub mod cli;
 pub mod crypto;
 mod hash;
 pub mod key;
