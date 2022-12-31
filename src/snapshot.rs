@@ -1,9 +1,11 @@
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{copy, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use zstd::stream::read::Decoder;
 use zstd::stream::read::Encoder;
 
 use std::collections::HashMap;
+use std::fs::create_dir_all;
+use std::fs::File;
 
 use crate::cas::ObjectFetch;
 use crate::cas::ObjectStore;
@@ -90,6 +92,7 @@ pub fn append<B: Remote, W: Write>(
 }
 
 // TODO: hack of map_content_2 to deal with walk_files
+// TODO: add concurrent hash verification along with writing it to disk
 pub fn fetch<B: Remote, R: Read>(
     key: &key::Key,
     remote: &mut B,
@@ -106,13 +109,19 @@ pub fn fetch<B: Remote, R: Read>(
         // Verify the data
         let mut dec = crypto::decrypt(key, data).unwrap();
         let mut und = Decoder::new(&mut dec).unwrap();
-        let content_hash = hash::hash(key, &mut und).unwrap();
 
+        // TODO: make this concurrent, for now, write to disk, then read and hash from disk.
         let target_path = target.join(path);
-        println!("\tPATH: {:?}", target_path);
+        create_dir_all(target_path.parent().unwrap()).unwrap();
+        let mut target_file = File::create(&target_path).unwrap();
+        copy(&mut und, &mut target_file).unwrap();
+        target_file.sync_data().unwrap();
+
+        let mut hash_file = File::open(&target_path).unwrap();
+        let content_hash = hash::hash(key, &mut hash_file).unwrap();
 
         let is_same = hash == content_hash;
-        println!("\tSAME: {:5}", is_same);
+        println!("\tSAME: {:5} - PATH: {:?}", is_same, target_path);
     });
 }
 

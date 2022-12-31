@@ -133,7 +133,14 @@ fn fetch<B: Remote>(key: &key::Key, remote: &mut B, name: String, target: &Path)
     let (mut index_content, mut map_content) = read_snapshot(remote, name.clone());
     let (_, mut map_content_2) = read_snapshot(remote, name);
 
-    snapshot::fetch(key, remote, &mut index_content, &mut map_content, &mut map_content_2, target);
+    snapshot::fetch(
+        key,
+        remote,
+        &mut index_content,
+        &mut map_content,
+        &mut map_content_2,
+        target,
+    );
 }
 
 // TODO: add a verify_all to validate the entire backup archive

@@ -216,18 +216,22 @@ impl Map {
     }
 
     pub fn find_pack(&self, chunk: &hash::Hash) -> Option<hash::Hash> {
-        let mut query_stmt = self.db.conn.prepare_cached(
-            "SELECT pack_hash
+        let mut query_stmt = self
+            .db
+            .conn
+            .prepare_cached(
+                "SELECT pack_hash
              FROM packfiles
-             WHERE content_hash = ?").unwrap();
+             WHERE content_hash = ?",
+            )
+            .unwrap();
 
-        query_stmt.query_row(
-            rs::params![hash::to_hex(chunk)],
-            |row| {
+        query_stmt
+            .query_row(rs::params![hash::to_hex(chunk)], |row| {
                 let hash: String = row.get(0).unwrap();
                 Ok(hash::from_hex(&hash).unwrap())
-            },
-        ).ok()
+            })
+            .ok()
     }
 }
 

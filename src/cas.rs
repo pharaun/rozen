@@ -2,14 +2,14 @@ use crate::hash;
 use crate::key;
 use crate::pack;
 use crate::pack::PackBuilder;
+use crate::pack::PackOut;
 use crate::remote::Remote;
 use crate::remote::Typ;
 use crate::sql::Map;
+use std::collections::HashMap;
+use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
-use std::io::Cursor;
-use std::collections::HashMap;
-use crate::pack::PackOut;
 
 // This manages the under laying layer
 // - chunking
@@ -175,12 +175,18 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
 
                 // 3. extract content from packfile, return it
                 if self.cache.contains_key(&pack) {
-                    let data: Vec<u8> = self.cache.get(&pack).unwrap().find_hash(hash.clone()).unwrap();
-                    return Some(Box::new(Cursor::new(data)));
+                    let data: Vec<u8> = self
+                        .cache
+                        .get(&pack)
+                        .unwrap()
+                        .find_hash(hash.clone())
+                        .unwrap();
+                    Some(Box::new(Cursor::new(data)))
+                } else {
+                    None
                 }
-                return None;
-            },
-            None => return None,
+            }
+            None => None,
         }
     }
 }
