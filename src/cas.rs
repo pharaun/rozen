@@ -7,6 +7,9 @@ use crate::remote::Typ;
 use crate::sql::Map;
 use std::io::Read;
 use std::io::Write;
+use std::io::Cursor;
+use std::collections::HashMap;
+use crate::pack::PackOut;
 
 // This manages the under laying layer
 // - chunking
@@ -138,4 +141,46 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
     // 1. Implement a way to fetch by content_hash
     // 2. returns packfiles involved + chunks involved
     // 3. fetch needed packfiles + chunks and reassembly then stream it out
+}
+
+// This should do it in a streaming manner
+pub struct ObjectFetch<'a, B: Remote + 'a> {
+    remote: &'a mut B,
+    cache: HashMap<hash::Hash, PackOut>,
+    map: Map,
+}
+
+impl<'a, B: Remote> ObjectFetch<'a, B> {
+    pub fn new(remote: &'a mut B, map: Map) -> Self {
+        ObjectFetch {
+            remote,
+            cache: HashMap::new(),
+            map,
+        }
+    }
+
+    pub fn get_content(&mut self, key: &key::Key, hash: &hash::Hash) -> Option<Box<dyn Read>> {
+        // 1. map to get content -> packfile
+        match self.map.find_pack(hash) {
+            Some(pack) => {
+                // 2. pack_cache to get packfile
+                if !self.cache.contains_key(&pack) {
+                    println!("Loading: {:?}", pack);
+
+                    let mut pack_read = self.remote.read(Typ::Pack, &pack).unwrap();
+                    let pack_file = PackOut::load(&mut pack_read, key);
+
+                    self.cache.insert(pack.clone(), pack_file);
+                }
+
+                // 3. extract content from packfile, return it
+                if self.cache.contains_key(&pack) {
+                    let data: Vec<u8> = self.cache.get(&pack).unwrap().find_hash(hash.clone()).unwrap();
+                    return Some(Box::new(Cursor::new(data)));
+                }
+                return None;
+            },
+            None => return None,
+        }
+    }
 }

@@ -1,9 +1,11 @@
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::Path;
 use zstd::stream::read::Decoder;
 use zstd::stream::read::Encoder;
 
 use std::collections::HashMap;
 
+use crate::cas::ObjectFetch;
 use crate::cas::ObjectStore;
 use crate::crypto;
 use crate::hash;
@@ -13,6 +15,7 @@ use crate::remote::Remote;
 use crate::remote::Typ;
 use crate::sql::walk_files;
 use crate::sql::Index;
+use crate::sql::Map;
 
 // TODO: can probs make the snapshot be strictly focused on snapshot concerns such as
 // - deciding what files needs to be stored in a snapshot
@@ -86,7 +89,34 @@ pub fn append<B: Remote, W: Write>(
     }
 }
 
+// TODO: hack of map_content_2 to deal with walk_files
 pub fn fetch<B: Remote, R: Read>(
+    key: &key::Key,
+    remote: &mut B,
+    index_content: &mut R,
+    map_content: &mut R,
+    map_content_2: &mut R,
+    target: &Path,
+) {
+    let map = Map::load(map_content, key);
+    let mut cas = ObjectFetch::new(remote, map);
+    walk_files(index_content, map_content_2, key, |path, _, _, hash| {
+        let data = cas.get_content(key, &hash).unwrap();
+
+        // Verify the data
+        let mut dec = crypto::decrypt(key, data).unwrap();
+        let mut und = Decoder::new(&mut dec).unwrap();
+        let content_hash = hash::hash(key, &mut und).unwrap();
+
+        let target_path = target.join(path);
+        println!("\tPATH: {:?}", target_path);
+
+        let is_same = hash == content_hash;
+        println!("\tSAME: {:5}", is_same);
+    });
+}
+
+pub fn verify<B: Remote, R: Read>(
     key: &key::Key,
     remote: &mut B,
     index_content: &mut R,

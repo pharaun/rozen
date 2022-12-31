@@ -1,5 +1,9 @@
 use ignore::WalkBuilder;
 
+use std::io::{Read, Write};
+use std::path::Path;
+use tempfile::TempDir;
+
 use clap::Parser;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -68,15 +72,20 @@ fn main() {
             append(&key, &config, &mut remote, name.clone());
         }
         Some(Commands::Fetch { name }) => {
-            fetch(&key, &mut remote, name.to_string());
+            let target = TempDir::new().unwrap();
+            fetch(&key, &mut remote, name.to_string(), target.path());
         }
         Some(Commands::Test) => {
             println!("TEST ONLY");
             let name = "TEST".to_string();
+            let target = TempDir::new().unwrap();
 
             append(&key, &config, &mut remote, Some(name.clone()));
-            fetch(&key, &mut remote, name);
+            fetch(&key, &mut remote, name.clone(), target.path());
             list(&mut remote);
+
+            // TODO: add support to picking an target/combo and verifying
+            verify(&key, &mut remote, name);
         }
         None => (),
     }
@@ -89,7 +98,7 @@ fn list<B: Remote>(remote: &mut B) {
 }
 
 fn append<B: Remote>(key: &key::Key, config: &cli::Config, remote: &mut B, name: Option<String>) {
-    let filename = match name {
+    let name = match name {
         Some(x) => x,
         None => {
             let datetime = OffsetDateTime::now_utc();
@@ -103,15 +112,7 @@ fn append<B: Remote>(key: &key::Key, config: &cli::Config, remote: &mut B, name:
     let _stype = config.sources.get(0).unwrap().source_type;
 
     // Store indexer + Map
-    let index_filename = format!("INDEX-{}.sqlite.zst", filename);
-    let mut index_content = remote
-        .write_multi_filename(Typ::Index, &index_filename)
-        .unwrap();
-
-    let map_filename = format!("MAP-{}.sqlite.zst", filename);
-    let mut map_content = remote
-        .write_multi_filename(Typ::Map, &map_filename)
-        .unwrap();
+    let (mut index_content, mut map_content) = write_snapshot(remote, name);
 
     // Perform an appending snapshot
     snapshot::append(
@@ -128,12 +129,40 @@ fn append<B: Remote>(key: &key::Key, config: &cli::Config, remote: &mut B, name:
     );
 }
 
-fn fetch<B: Remote>(key: &key::Key, remote: &mut B, name: String) {
+fn fetch<B: Remote>(key: &key::Key, remote: &mut B, name: String, target: &Path) {
+    let (mut index_content, mut map_content) = read_snapshot(remote, name.clone());
+    let (_, mut map_content_2) = read_snapshot(remote, name);
+
+    snapshot::fetch(key, remote, &mut index_content, &mut map_content, &mut map_content_2, target);
+}
+
+// TODO: add a verify_all to validate the entire backup archive
+fn verify<B: Remote>(key: &key::Key, remote: &mut B, name: String) {
+    let (mut index_content, mut map_content) = read_snapshot(remote, name);
+
+    snapshot::verify(key, remote, &mut index_content, &mut map_content);
+}
+
+fn read_snapshot<B: Remote>(remote: &mut B, name: String) -> (Box<dyn Read>, Box<dyn Read>) {
     let index_filename = format!("INDEX-{}.sqlite.zst", name);
-    let mut index_content = remote.read_filename(Typ::Index, &index_filename).unwrap();
+    let index_content = remote.read_filename(Typ::Index, &index_filename).unwrap();
 
     let map_filename = format!("MAP-{}.sqlite.zst", name);
-    let mut map_content = remote.read_filename(Typ::Map, &map_filename).unwrap();
+    let map_content = remote.read_filename(Typ::Map, &map_filename).unwrap();
 
-    snapshot::fetch(key, remote, &mut index_content, &mut map_content);
+    (index_content, map_content)
+}
+
+fn write_snapshot<B: Remote>(remote: &mut B, name: String) -> (Box<dyn Write>, Box<dyn Write>) {
+    let index_filename = format!("INDEX-{}.sqlite.zst", name);
+    let index_content = remote
+        .write_multi_filename(Typ::Index, &index_filename)
+        .unwrap();
+
+    let map_filename = format!("MAP-{}.sqlite.zst", name);
+    let map_content = remote
+        .write_multi_filename(Typ::Map, &map_filename)
+        .unwrap();
+
+    (index_content, map_content)
 }
