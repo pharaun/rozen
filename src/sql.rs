@@ -1,5 +1,6 @@
 use rusqlite as rs;
 
+use log::debug;
 use std::io::{copy, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use zstd::stream::read::Decoder;
@@ -241,10 +242,10 @@ where
     R: Read,
 {
     // Load up the index db
-    println!("LOADING Index sql database");
+    debug!("Loading INDEX db");
     let idx = Index::load(index, key).db;
     let map_file = {
-        println!("LOADING Map sql database");
+        debug!("Loading MAP db");
         let m = Map::load(map, key).db;
         let _ = m.conn.close();
         m.db_tmp
@@ -263,7 +264,6 @@ where
             )
             .unwrap();
         let mut rows = dump_stmt.query([]).unwrap();
-
         while let Ok(Some(row)) = rows.next() {
             let path: String = row.get(0).unwrap();
             let perm: u32 = row.get(1).unwrap();

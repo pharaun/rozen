@@ -6,6 +6,7 @@ use crate::pack::PackOut;
 use crate::remote::Remote;
 use crate::remote::Typ;
 use crate::sql::Map;
+use log::info;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::io::Read;
@@ -165,7 +166,7 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
             Some(pack) => {
                 // 2. pack_cache to get packfile
                 if !self.cache.contains_key(&pack) {
-                    println!("Loading: {:?}", pack);
+                    info!("Loading packfile: {:?}", pack);
 
                     let mut pack_read = self.remote.read(Typ::Pack, &pack).unwrap();
                     let pack_file = PackOut::load(&mut pack_read, key);

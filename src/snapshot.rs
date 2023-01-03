@@ -3,6 +3,7 @@ use std::path::Path;
 use zstd::stream::read::Decoder;
 use zstd::stream::read::Encoder;
 
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::fs::create_dir_all;
 use std::fs::File;
@@ -44,13 +45,13 @@ pub fn append<B: Remote, W: Write>(
             match entry {
                 Ok(e) => {
                     match e.file_type() {
-                        None => println!("NONE: {}", e.path().display()),
+                        None => info!("NONE: {}", e.path().display()),
                         Some(ft) => {
                             if ft.is_file() {
-                                println!("COMP: {}", e.path().display());
+                                info!("COMP: {}", e.path().display());
 
                                 let meta = e.metadata().unwrap();
-                                println!("len: {:?}", meta.len());
+                                debug!("len: {:?}", meta.len());
 
                                 let mut file_data = std::fs::File::open(e.path()).unwrap();
 
@@ -76,12 +77,12 @@ pub fn append<B: Remote, W: Write>(
                                 // around in packfile after compaction
                                 index.insert_file(e.path(), &content_hash);
                             } else {
-                                println!("SKIP: {}", e.path().display());
+                                info!("SKIP: {}", e.path().display());
                             }
                         }
                     }
                 }
-                Err(e) => println!("ERRR: {:?}", e),
+                Err(e) => warn!("ERRR: {:?}", e),
             }
         }
 
@@ -121,7 +122,7 @@ pub fn fetch<B: Remote, R: Read>(
         let content_hash = hash::hash(key, &mut hash_file).unwrap();
 
         let is_same = hash == content_hash;
-        println!("\tSAME: {:5} - PATH: {:?}", is_same, target_path);
+        info!("\tSAME: {:5} - PATH: {:?}", is_same, target_path);
     });
 }
 
@@ -135,15 +136,13 @@ pub fn verify<B: Remote, R: Read>(
     let mut pack_cache = HashMap::new();
 
     // Dump the sqlite db data so we can view what it is
-    println!("\nINDEX Dump + ARCHIVE Dump + PACK Dump");
+    println!("VERIFYING:");
     walk_files(index_content, map_content, key, |path, perm, pack, hash| {
-        println!("HASH: {:?}", hash);
-        println!("\tPACK: {:?}", pack);
+        println!("\tHASH: {:?}", hash);
+        println!("\t\tPACK: {:?}", pack);
 
         // Find or load the packfile
         if !pack_cache.contains_key(&pack) {
-            println!("\t\tLoading: {:?}", pack);
-
             let mut pack_read = remote.read(Typ::Pack, &pack).unwrap();
             let pack_file = PackOut::load(&mut pack_read, key);
 

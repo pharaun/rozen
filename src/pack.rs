@@ -1,3 +1,4 @@
+use log::debug;
 use std::collections::HashMap;
 use std::io::{copy, Read, Write};
 use zstd::stream::read::Decoder;
@@ -70,7 +71,7 @@ impl PackOut {
         for EdatStream { header, mut data } in ltvc {
             match header {
                 Header::Fhdr { hash } => {
-                    println!("\t\t\tFhdr Edat");
+                    debug!("FHDR - EDAT");
 
                     let mut out_data = vec![];
                     copy(&mut data, &mut out_data).unwrap();
@@ -78,7 +79,7 @@ impl PackOut {
                     idx.insert(hash, out_data);
                 }
                 Header::Aidx => {
-                    println!("\t\t\tAidx Edat");
+                    debug!("AIDX - EDAT");
                     let mut idx_buf: Vec<u8> = Vec::new();
                     let mut dec = crypto::decrypt(key, &mut data).unwrap();
                     let mut und = Decoder::new(&mut dec).unwrap();
@@ -86,7 +87,7 @@ impl PackOut {
 
                     // Deserialize the index
                     chunk_idx = bincode::deserialize(&idx_buf).unwrap();
-                    println!("\t\t\t\tChunk len: {:?}", chunk_idx.len());
+                    debug!("AIDX - EDAT - length: {}", chunk_idx.len());
                 }
 
                 // Skip header we don't care for

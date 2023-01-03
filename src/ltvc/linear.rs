@@ -3,6 +3,7 @@ use std::io::Read;
 use crate::hash;
 use crate::ltvc::reader::EdatReader;
 use crate::ltvc::reader::{LtvcEntry, LtvcReader};
+use log::debug;
 
 // Header of the Edat blocks (ie all Edat must be preceeded by)
 #[derive(Debug, Clone)]
@@ -51,7 +52,7 @@ impl<R: Read> Iterator for LtvcLinear<R> {
             match (self.state.clone(), self.inner.next()) {
                 // Assert that the first entry is an Ahdr with 0x01 as version
                 (Spo::Start, Some(Ok(LtvcEntry::Ahdr { version }))) if version == 0x01 => {
-                    println!("\t\t\tAHDR 0x01");
+                    debug!("AHDR 0x01");
                     self.state = Spo::Ahdr;
                 }
 
@@ -59,28 +60,28 @@ impl<R: Read> Iterator for LtvcLinear<R> {
                 // header state is: Fhdr/Aidx/Shdr/Pidx
                 (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash })))
                 | (Spo::Edat, Some(Ok(LtvcEntry::Fhdr { hash }))) => {
-                    println!("\t\t\tFhdr <hash>");
+                    debug!("FHDR <{:?}>", hash);
                     self.state = Spo::Header(Header::Fhdr { hash });
                 }
 
                 (Spo::Ahdr, Some(Ok(LtvcEntry::Aidx))) | (Spo::Edat, Some(Ok(LtvcEntry::Aidx))) => {
-                    println!("\t\t\tAidx");
+                    debug!("AIDX");
                     self.state = Spo::Header(Header::Aidx);
                 }
 
                 (Spo::Ahdr, Some(Ok(LtvcEntry::Shdr))) | (Spo::Edat, Some(Ok(LtvcEntry::Shdr))) => {
-                    println!("\t\t\tShdr");
+                    debug!("SHDR");
                     self.state = Spo::Header(Header::Shdr);
                 }
 
                 (Spo::Ahdr, Some(Ok(LtvcEntry::Pidx))) | (Spo::Edat, Some(Ok(LtvcEntry::Pidx))) => {
-                    println!("\t\t\tPidx");
+                    debug!("PIDX");
                     self.state = Spo::Header(Header::Pidx);
                 }
 
                 // Assert that Edat follows Header(1 of them)
                 (Spo::Header(header), Some(Ok(LtvcEntry::Edat { data }))) => {
-                    println!("\t\t\tHeader Edat");
+                    debug!("<Header> EDAT");
                     self.state = Spo::Edat;
 
                     // Return a result
@@ -89,7 +90,7 @@ impl<R: Read> Iterator for LtvcLinear<R> {
 
                 // Assert that Aend follows Edat
                 (Spo::Edat, Some(Ok(LtvcEntry::Aend { idx: _ }))) => {
-                    println!("\tAend");
+                    debug!("AEND");
                     self.state = Spo::Aend;
                 }
 

@@ -10,6 +10,7 @@ use time::OffsetDateTime;
 
 mod cli;
 use crate::cli::Commands;
+use log::info;
 use rozen::crypto;
 use rozen::key;
 use rozen::remote;
@@ -28,6 +29,9 @@ use rozen::snapshot;
 //  * B-<hash>.p? - I'm not sure, could have B-<hash> -> metadata -> B-<hash>.p? but could
 //      also just always have the B-<hash> xor B-<hash>.p?
 fn main() {
+    // Logger
+    env_logger::init();
+
     crypto::init().unwrap();
 
     // Per run key
@@ -54,8 +58,7 @@ fn main() {
     } else {
         panic!("Config file was set, not supported yet");
     };
-    println!("CONFIG:");
-    println!("\t{:?}", config);
+    info!("CONFIG: {:?}", config);
 
     // In memory remote for data storage
     let mut remote = remote::mem::MemoryVFS::new(Some("test.sqlite"));
