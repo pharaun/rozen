@@ -65,54 +65,70 @@ fn main() {
     let mut _remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333").unwrap();
 
     match &cli.command {
+        Some(Commands::Init { .. }) => {}
         Some(Commands::List) => {
             list(&mut remote);
         }
-        Some(Commands::Append { name }) => {
-            append(&key, &config, &mut remote, name.clone());
+        Some(Commands::Append { tag }) => {
+            let timestamp = OffsetDateTime::now_utc();
+            append(&key, &config, &mut remote, timestamp, tag.clone());
         }
-        Some(Commands::Fetch { name }) => {
-            let target = TempDir::new().unwrap();
-            fetch(&key, &mut remote, name.to_string(), target.path());
+        Some(Commands::Fetch {
+            timestamp,
+            tag,
+            dir,
+        }) => {
+            let timestamp = OffsetDateTime::from_unix_timestamp(*timestamp).unwrap();
+            let target = dir.as_path();
+            fetch(&key, &mut remote, timestamp, tag.clone(), target);
         }
         Some(Commands::Test) => {
             println!("TEST ONLY");
-            let name = "TEST".to_string();
+            let timestamp = OffsetDateTime::now_utc();
+            let tag = Some("TEST".to_string());
             let target = TempDir::new().unwrap();
 
-            append(&key, &config, &mut remote, Some(name.clone()));
-            fetch(&key, &mut remote, name.clone(), target.path());
+            append(&key, &config, &mut remote, timestamp, tag.clone());
+            fetch(&key, &mut remote, timestamp, tag.clone(), target.path());
             list(&mut remote);
 
             // TODO: add support to picking an target/combo and verifying
-            verify(&key, &mut remote, name);
+            verify(&key, &mut remote, timestamp, tag);
         }
         None => (),
     }
 }
 
 fn list<B: Remote>(remote: &mut B) {
+    // TODO: add the following fields/option
+    // 1. timestamp
+    // 2. size (of stored backup?)
+    // 3. Prefix name - I-{timestamp}-{name}
     for key in remote.list_keys(Typ::Index).unwrap() {
-        println!("Key: {:?}", key);
+        let (typ, odt, tag) = from_key(&key);
+        println!(
+            "Typ: {}, odt: {}, tag: {:?}",
+            typ,
+            odt.format(&Rfc3339).unwrap(),
+            tag
+        );
     }
 }
 
-fn append<B: Remote>(key: &key::Key, config: &cli::Config, remote: &mut B, name: Option<String>) {
-    let name = match name {
-        Some(x) => x,
-        None => {
-            let datetime = OffsetDateTime::now_utc();
-            datetime.format(&Rfc3339).unwrap()
-        }
-    };
-
+fn append<B: Remote>(
+    key: &key::Key,
+    config: &cli::Config,
+    remote: &mut B,
+    timestamp: OffsetDateTime,
+    tag: Option<String>,
+) {
     // Config bits
     let target = config.sources.get(0).unwrap().include.get(0).unwrap();
     let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
     let _stype = config.sources.get(0).unwrap().source_type;
 
     // Store indexer + Map
-    let (mut index_content, mut map_content) = write_snapshot(remote, name);
+    let (mut index_content, mut map_content) = write_snapshot(remote, timestamp, tag);
 
     // Perform an appending snapshot
     snapshot::append(
@@ -129,9 +145,15 @@ fn append<B: Remote>(key: &key::Key, config: &cli::Config, remote: &mut B, name:
     );
 }
 
-fn fetch<B: Remote>(key: &key::Key, remote: &mut B, name: String, target: &Path) {
-    let (mut index_content, mut map_content) = read_snapshot(remote, name.clone());
-    let (_, mut map_content_2) = read_snapshot(remote, name);
+fn fetch<B: Remote>(
+    key: &key::Key,
+    remote: &mut B,
+    timestamp: OffsetDateTime,
+    tag: Option<String>,
+    target: &Path,
+) {
+    let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag.clone());
+    let (_, mut map_content_2) = read_snapshot(remote, timestamp, tag);
 
     snapshot::fetch(
         key,
@@ -144,32 +166,69 @@ fn fetch<B: Remote>(key: &key::Key, remote: &mut B, name: String, target: &Path)
 }
 
 // TODO: add a verify_all to validate the entire backup archive
-fn verify<B: Remote>(key: &key::Key, remote: &mut B, name: String) {
-    let (mut index_content, mut map_content) = read_snapshot(remote, name);
+fn verify<B: Remote>(
+    key: &key::Key,
+    remote: &mut B,
+    timestamp: OffsetDateTime,
+    tag: Option<String>,
+) {
+    let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag);
 
     snapshot::verify(key, remote, &mut index_content, &mut map_content);
 }
 
-fn read_snapshot<B: Remote>(remote: &mut B, name: String) -> (Box<dyn Read>, Box<dyn Read>) {
-    let index_filename = format!("INDEX-{}.sqlite.zst", name);
-    let index_content = remote.read_filename(Typ::Index, &index_filename).unwrap();
-
-    let map_filename = format!("MAP-{}.sqlite.zst", name);
-    let map_content = remote.read_filename(Typ::Map, &map_filename).unwrap();
+fn read_snapshot<B: Remote>(
+    remote: &mut B,
+    timestamp: OffsetDateTime,
+    tag: Option<String>,
+) -> (Box<dyn Read>, Box<dyn Read>) {
+    let index_content = remote
+        .read_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))
+        .unwrap();
+    let map_content = remote
+        .read_filename(Typ::Map, &to_key("M", timestamp, tag))
+        .unwrap();
 
     (index_content, map_content)
 }
 
-fn write_snapshot<B: Remote>(remote: &mut B, name: String) -> (Box<dyn Write>, Box<dyn Write>) {
-    let index_filename = format!("INDEX-{}.sqlite.zst", name);
+fn write_snapshot<B: Remote>(
+    remote: &mut B,
+    timestamp: OffsetDateTime,
+    tag: Option<String>,
+) -> (Box<dyn Write>, Box<dyn Write>) {
     let index_content = remote
-        .write_multi_filename(Typ::Index, &index_filename)
+        .write_multi_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))
         .unwrap();
 
-    let map_filename = format!("MAP-{}.sqlite.zst", name);
     let map_content = remote
-        .write_multi_filename(Typ::Map, &map_filename)
+        .write_multi_filename(Typ::Map, &to_key("M", timestamp, tag))
         .unwrap();
 
     (index_content, map_content)
+}
+
+fn to_key(typ: &str, timestamp: OffsetDateTime, tag: Option<String>) -> String {
+    match tag {
+        Some(tag) => format!("{}-{}-{}", typ, timestamp.unix_timestamp(), tag),
+        None => format!("{}-{}", typ, timestamp.unix_timestamp()),
+    }
+}
+
+fn from_key(key: &str) -> (&str, OffsetDateTime, Option<&str>) {
+    let items: Vec<&str> = key.split('-').collect();
+
+    match items[..] {
+        [ty, ts, tag] => (
+            ty,
+            OffsetDateTime::from_unix_timestamp(ts.parse::<i64>().unwrap()).unwrap(),
+            Some(tag),
+        ),
+        [ty, ts] => (
+            ty,
+            OffsetDateTime::from_unix_timestamp(ts.parse::<i64>().unwrap()).unwrap(),
+            None,
+        ),
+        _ => panic!("Wrong length split!"),
+    }
 }

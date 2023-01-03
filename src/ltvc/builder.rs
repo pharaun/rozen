@@ -32,7 +32,7 @@ impl<W: Write> LtvcBuilder<W> {
         let trailing_hash = {
             let mut hash = Checksum::new();
             hash.update(data);
-            hash.finalize() as u32
+            hash.finalize()
         };
 
         let mut len = 0;

@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "Rozen")]
@@ -12,12 +12,35 @@ pub struct Cli {
     #[arg(short, long, value_name = "FILE")]
     pub config: Option<PathBuf>,
 
+    // /// Verbose, use multiples to increase level
+    // #[arg(short, long, action = clap::ArgAction::Count)]
+    // verbose: u8,
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Init the repo
+    #[command(group(ArgGroup::new("aws")
+                        .args(["aws_region", "aws_bucket"])
+                        .conflicts_with("sqlite_file")
+                        .multiple(true)
+                   ))]
+    Init {
+        /// AWS Region
+        #[arg(long, requires = "aws_bucket")]
+        aws_region: Option<String>,
+
+        /// AWS Bucket
+        #[arg(long, requires = "aws_region")]
+        aws_bucket: Option<String>,
+
+        /// Local Sqlite file
+        #[arg(long)]
+        sqlite_file: Option<PathBuf>,
+    },
+
     /// Lists all known snapshots
     List,
 
@@ -25,13 +48,19 @@ pub enum Commands {
     Append {
         /// Set a custom name, otherwise datetime is the default
         #[arg(short, long)]
-        name: Option<String>,
+        tag: Option<String>,
     },
 
     /// Fetch a snapshot from remote
     Fetch {
-        /// The name of the snapshot to fetch
-        name: String,
+        /// The timestamp of the snapshot
+        timestamp: i64,
+
+        /// The tag of the snapshot to fetch
+        tag: Option<String>,
+
+        /// Directory to download snapshot files to
+        dir: PathBuf,
     },
 
     /// Test the entire lifecycle
