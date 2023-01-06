@@ -29,14 +29,8 @@ use rozen::snapshot;
 //  * B-<hash>.p? - I'm not sure, could have B-<hash> -> metadata -> B-<hash>.p? but could
 //      also just always have the B-<hash> xor B-<hash>.p?
 fn main() {
-    // Logger
     env_logger::init();
-
     crypto::init().unwrap();
-
-    // Per run key
-    // TODO: bad news, should have separate key, one for encryption, and one for hmac
-    let key = key::gen_key();
 
     // Parse the cli
     let cli = cli::Cli::parse();
@@ -67,8 +61,21 @@ fn main() {
     // Build a s3 remote here
     let mut _remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333").unwrap();
 
+    // TODO: should use a user given password, hardcode for ease of test right now
+    let key = key::MemKey::new();
+    let password = "ThisIsAPassword";
+
+    // Convert MemKey to DiskKey with password
+    let disk_key = key.to_disk_key(&password);
+
+    // Load disk key to mem
+    let key = disk_key.to_mem_key(&password);
+
     match &cli.command {
-        Some(Commands::Init { .. }) => {}
+        Some(Commands::Init { .. }) => {
+            // For now just focus on figuring out some sort of key management/generation here
+
+        }
         Some(Commands::List) => {
             list(&mut remote);
         }
@@ -119,7 +126,7 @@ fn list<B: Remote>(remote: &mut B) {
 }
 
 fn append<B: Remote>(
-    key: &key::Key,
+    key: &key::MemKey,
     config: &cli::Config,
     remote: &mut B,
     timestamp: OffsetDateTime,
@@ -149,7 +156,7 @@ fn append<B: Remote>(
 }
 
 fn fetch<B: Remote>(
-    key: &key::Key,
+    key: &key::MemKey,
     remote: &mut B,
     timestamp: OffsetDateTime,
     tag: Option<String>,
@@ -170,7 +177,7 @@ fn fetch<B: Remote>(
 
 // TODO: add a verify_all to validate the entire backup archive
 fn verify<B: Remote>(
-    key: &key::Key,
+    key: &key::MemKey,
     remote: &mut B,
     timestamp: OffsetDateTime,
     tag: Option<String>,

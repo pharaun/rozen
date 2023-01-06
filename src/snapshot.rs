@@ -31,7 +31,7 @@ use crate::sql::Map;
 //      then the queue can then manage "whole" or "chunked" or "chunked+delta" for processing
 //      before it ships it into the packfile possibly
 pub fn append<B: Remote, W: Write>(
-    key: &key::Key,
+    key: &key::MemKey,
     remote: &mut B,
     index_content: W,
     map_content: W,
@@ -95,7 +95,7 @@ pub fn append<B: Remote, W: Write>(
 // TODO: hack of map_content_2 to deal with walk_files
 // TODO: add concurrent hash verification along with writing it to disk
 pub fn fetch<B: Remote, R: Read>(
-    key: &key::Key,
+    key: &key::MemKey,
     remote: &mut B,
     index_content: &mut R,
     map_content: &mut R,
@@ -127,7 +127,7 @@ pub fn fetch<B: Remote, R: Read>(
 }
 
 pub fn verify<B: Remote, R: Read>(
-    key: &key::Key,
+    key: &key::MemKey,
     remote: &mut B,
     index_content: &mut R,
     map_content: &mut R,

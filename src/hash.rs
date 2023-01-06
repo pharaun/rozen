@@ -43,8 +43,8 @@ pub struct Hash(blake3::Hash);
 // 2. Index - I type
 // 3. Packfile - P Type
 // 4. Mapper - M Type
-pub fn hash<R: Read>(key: &key::Key, data: &mut R) -> Result<Hash, std::io::Error> {
-    let mut hash = blake3::Hasher::new_keyed(&key.0);
+pub fn hash<R: Read>(key: &key::MemKey, data: &mut R) -> Result<Hash, std::io::Error> {
+    let mut hash = blake3::Hasher::new_keyed(&key.hmac_key().0);
     copy(data, &mut hash)?;
     Ok(Hash(hash.finalize()))
 }

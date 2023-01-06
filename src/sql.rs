@@ -67,7 +67,7 @@ impl SqlDb {
             .unwrap();
     }
 
-    fn load<R: Read>(reader: &mut R, key: &key::Key) -> Self {
+    fn load<R: Read>(reader: &mut R, key: &key::MemKey) -> Self {
         let ltvc = LtvcLinear::new(reader);
 
         for EdatStream { header, data } in ltvc {
@@ -92,7 +92,7 @@ impl SqlDb {
         panic!("Did not find Shdr or Pidx in the stream!");
     }
 
-    fn unload<W: Write>(self, header: UnloadType, key: &key::Key, writer: W) {
+    fn unload<W: Write>(self, header: UnloadType, key: &key::MemKey, writer: W) {
         self.conn.close().unwrap();
 
         let mut ltvc = LtvcIndexing::new(writer);
@@ -135,13 +135,13 @@ impl Index {
         Index { db }
     }
 
-    pub fn load<R: Read>(index: &mut R, key: &key::Key) -> Self {
+    pub fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Self {
         Index {
             db: SqlDb::load(index, key),
         }
     }
 
-    pub fn unload<W: Write>(self, key: &key::Key, writer: W) {
+    pub fn unload<W: Write>(self, key: &key::MemKey, writer: W) {
         self.db.unload(UnloadType::Shdr, key, writer);
     }
 
@@ -188,13 +188,13 @@ impl Map {
         Map { db }
     }
 
-    pub fn load<R: Read>(index: &mut R, key: &key::Key) -> Self {
+    pub fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Self {
         Map {
             db: SqlDb::load(index, key),
         }
     }
 
-    pub fn unload<W: Write>(self, key: &key::Key, writer: W) {
+    pub fn unload<W: Write>(self, key: &key::MemKey, writer: W) {
         self.db.unload(UnloadType::Pidx, key, writer);
     }
 
@@ -236,7 +236,7 @@ impl Map {
     }
 }
 
-pub fn walk_files<R, F>(index: &mut R, map: &mut R, key: &key::Key, mut f: F)
+pub fn walk_files<R, F>(index: &mut R, map: &mut R, key: &key::MemKey, mut f: F)
 where
     F: FnMut(&str, u32, hash::Hash, hash::Hash),
     R: Read,

@@ -57,8 +57,8 @@ pub struct Crypter<R, E> {
 //
 //     - Use the phash (file HMAC) for additional data with the encryption to ensure that
 //     the encrypted data matches the phash
-pub fn encrypt<R: Read>(key: &key::Key, reader: R) -> CResult<Crypter<R, EncEngine>> {
-    let (stream, header) = Stream::init_push(key).map_err(|_| CryptoError::InitPush)?;
+pub fn encrypt<R: Read>(key: &key::MemKey, reader: R) -> CResult<Crypter<R, EncEngine>> {
+    let (stream, header) = Stream::init_push(&key.enc_key()).map_err(|_| CryptoError::InitPush)?;
     let engine = EncEngine(stream);
 
     // Chunk Frame size + encryption additional bytes (~17 bytes)
@@ -76,14 +76,14 @@ pub fn encrypt<R: Read>(key: &key::Key, reader: R) -> CResult<Crypter<R, EncEngi
     })
 }
 
-pub fn decrypt<R: Read>(key: &key::Key, mut reader: R) -> CResult<Crypter<R, DecEngine>> {
+pub fn decrypt<R: Read>(key: &key::MemKey, mut reader: R) -> CResult<Crypter<R, DecEngine>> {
     // Read out the header
     let mut dheader: [u8; 24] = [0; 24];
     reader.read_exact(&mut dheader)?;
     let fheader = Header::from_slice(&dheader).ok_or(CryptoError::HeaderParse)?;
 
     // Decrypter setup
-    let stream = Stream::init_pull(&fheader, key).map_err(|_| CryptoError::InitPull)?;
+    let stream = Stream::init_pull(&fheader, &key.enc_key()).map_err(|_| CryptoError::InitPull)?;
     let engine = DecEngine(stream);
 
     // Chunk Frame size (input will be frame+abytes)

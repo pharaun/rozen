@@ -1,6 +1,5 @@
 use crate::hash;
 use crate::key;
-use crate::pack;
 use crate::pack::PackBuilder;
 use crate::pack::PackOut;
 use crate::remote::Remote;
@@ -63,7 +62,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
     pub fn append<R: Read>(
         &mut self,
         hash: &hash::Hash,
-        key: &key::Key,
+        key: &key::MemKey,
         reader: &mut R,
         size: u64,
     ) {
@@ -79,13 +78,13 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
     fn append_big<R: Read>(
         &mut self,
         hash: &hash::Hash,
-        key: &key::Key,
+        key: &key::MemKey,
         reader: &mut R,
     ) -> hash::Hash {
         // This one focuses on reading in one single big file into its own packfile and uploading
         // it as it is
         let mut temp_pack = {
-            let pack_id = pack::generate_pack_id();
+            let pack_id = key.gen_id();
             let multiwrite = self.remote.write_multi(Typ::Pack, &pack_id).unwrap();
             PackBuilder::new(pack_id, multiwrite)
         };
@@ -101,7 +100,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
     fn append_small<R: Read>(
         &mut self,
         hash: &hash::Hash,
-        key: &key::Key,
+        key: &key::MemKey,
         reader: &mut R,
     ) -> hash::Hash {
         // Stream the data into the pack
@@ -115,7 +114,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         //  5. if above certain size just send it as its own archive to
         //     backend
         let temp_pack = self.current_pack.get_or_insert_with(|| {
-            let pack_id = pack::generate_pack_id();
+            let pack_id = key.gen_id();
             let multiwrite = self.remote.write_multi(Typ::Pack, &pack_id).unwrap();
             PackBuilder::new(pack_id, multiwrite)
         });
@@ -128,7 +127,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         pack_id
     }
 
-    pub fn finalize<W: Write>(mut self, map_content: W, key: &key::Key) {
+    pub fn finalize<W: Write>(mut self, map_content: W, key: &key::MemKey) {
         // Force an finalize if its not already finalized
         if self.current_pack.is_some() {
             self.current_pack.take().unwrap().finalize(key);
@@ -160,7 +159,7 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
         }
     }
 
-    pub fn get_content(&mut self, key: &key::Key, hash: &hash::Hash) -> Option<Box<dyn Read>> {
+    pub fn get_content(&mut self, key: &key::MemKey, hash: &hash::Hash) -> Option<Box<dyn Read>> {
         // 1. map to get content -> packfile
         match self.map.find_pack(hash) {
             Some(pack) => {

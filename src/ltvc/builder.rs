@@ -67,6 +67,10 @@ impl<W: Write> LtvcBuilder<W> {
     // TODO: may be worth moving compression/encryption? to ensure that only
     // compressed+encrypted data arrives here, but also the management of those
     // might be better else where cos there might be multi-threading concerns
+    //
+    // TODO: consider having an header + edat id to allow reconstruction if header and edat
+    // get scrambled, unclear if we need also an incrementing id for the edat to reconstruct
+    // ordering as well
     pub fn write_edat<R: Read>(&mut self, reader: &mut R) -> Result<usize, Error> {
         let mut r_len = 0;
         let mut in_buf = [0u8; CHUNK_SIZE];

@@ -83,7 +83,7 @@ impl<W: Write> LtvcIndexing<W> {
         });
     }
 
-    pub fn finalize(mut self, append_aidx: bool, key: &key::Key) {
+    pub fn finalize(mut self, append_aidx: bool, key: &key::MemKey) {
         if append_aidx {
             let a_idx = self.idx;
 
