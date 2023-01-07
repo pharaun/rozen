@@ -1,7 +1,11 @@
 use serde::Deserialize;
+use serde::Serialize;
+
 use std::path::PathBuf;
 
 use clap::{ArgGroup, Parser, Subcommand};
+
+use rozen::key::DiskKey;
 
 #[derive(Parser)]
 #[command(name = "Rozen")]
@@ -70,15 +74,18 @@ pub enum Commands {
 // Configuration
 // At a later time honor: https://aws.amazon.com/blogs/security/a-new-and-standardized-way-to-manage-credentials-in-the-aws-sdks/
 // envy = "0.4.2" - for grabbing the env vars via serde
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Config {
     pub symlink: bool,
     pub same_fs: bool,
 
     pub sources: Vec<Source>,
+
+    // credentials
+    pub disk_key: Option<DiskKey>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Source {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
@@ -87,7 +94,7 @@ pub struct Source {
     pub source_type: SourceType,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
 pub enum SourceType {
     AppendOnly,
 }

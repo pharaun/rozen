@@ -66,15 +66,15 @@ fn main() {
     let password = "ThisIsAPassword";
 
     // Convert MemKey to DiskKey with password
-    let disk_key = key.to_disk_key(&password);
+    let disk_key = key.to_disk_key(password);
 
     // Load disk key to mem
-    let key = disk_key.to_mem_key(&password);
+    let key = disk_key.to_mem_key(password);
 
     match &cli.command {
         Some(Commands::Init { .. }) => {
             // For now just focus on figuring out some sort of key management/generation here
-
+            init(&config, password);
         }
         Some(Commands::List) => {
             list(&mut remote);
@@ -107,6 +107,24 @@ fn main() {
         }
         None => (),
     }
+}
+
+fn init(config: &cli::Config, password: &str) {
+    // Generate a new key and encrypt it before putting it into the config file to be stored on disk
+    let key = key::MemKey::new();
+    let disk_key = key.to_disk_key(password);
+
+    let mut config2 = config.clone();
+    config2.disk_key = Some(disk_key);
+
+    println!("CONFIG: {:?}", config2);
+
+    let toml = toml::to_string(&config2).unwrap();
+
+    println!("TOML:\n{}", toml);
+
+    let config3: cli::Config = toml::from_str(&toml).unwrap();
+    println!("CONFIG: {:?}", config3);
 }
 
 fn list<B: Remote>(remote: &mut B) {

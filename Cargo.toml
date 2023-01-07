@@ -31,6 +31,7 @@ time = { version = "0.3", features = ["formatting"] }
 
 # Configuration
 toml = "0.5"
+base64 = "0.20"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
