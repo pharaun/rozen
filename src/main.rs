@@ -35,25 +35,6 @@ fn main() {
     // Parse the cli
     let cli = cli::Cli::parse();
 
-    let config: cli::Config = if cli.config.is_none() {
-        toml::from_str(
-            r#"
-            symlink = true
-            same_fs = true
-
-            [[sources]]
-                include = ["docs"]
-                exclude = ["*.pyc"]
-                type = "AppendOnly"
-
-        "#,
-        )
-        .unwrap()
-    } else {
-        panic!("Config file was set, not supported yet");
-    };
-    info!("CONFIG: {:?}", config);
-
     // In memory remote for data storage
     let mut remote = remote::mem::MemoryVFS::new(Some("test.sqlite"));
     let mut _remote = remote::mem::MemoryVFS::new(None);
@@ -62,26 +43,28 @@ fn main() {
     let mut _remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333").unwrap();
 
     // TODO: should use a user given password, hardcode for ease of test right now
-    let key = key::MemKey::new();
     let password = "ThisIsAPassword";
-
-    // Convert MemKey to DiskKey with password
-    let disk_key = key.to_disk_key(password);
-
-    // Load disk key to mem
-    let key = disk_key.to_mem_key(password);
 
     match &cli.command {
         Some(Commands::Init { .. }) => {
+            // Dump config to a TEST typ
+            let mut config_content = remote.write_multi_filename(Typ::TEST, "CONFIG").unwrap();
+
             // For now just focus on figuring out some sort of key management/generation here
-            init(&config, password);
+            init(&mut config_content, password);
         }
         Some(Commands::List) => {
             list(&mut remote);
         }
         Some(Commands::Append { tag }) => {
             let timestamp = OffsetDateTime::now_utc();
-            append(&key, &config, &mut remote, timestamp, tag.clone());
+
+            let mut config_content = remote.read_filename(Typ::TEST, "CONFIG").unwrap();
+            let mut config_str = String::new();
+            config_content.read_to_string(&mut config_str).unwrap();
+            let config: cli::Config = toml::from_str(&config_str).unwrap();
+
+            append(&config, password, &mut remote, timestamp, tag.clone());
         }
         Some(Commands::Fetch {
             timestamp,
@@ -90,7 +73,20 @@ fn main() {
         }) => {
             let timestamp = OffsetDateTime::from_unix_timestamp(*timestamp).unwrap();
             let target = dir.as_path();
-            fetch(&key, &mut remote, timestamp, tag.clone(), target);
+
+            let mut config_content = remote.read_filename(Typ::TEST, "CONFIG").unwrap();
+            let mut config_str = String::new();
+            config_content.read_to_string(&mut config_str).unwrap();
+            let config: cli::Config = toml::from_str(&config_str).unwrap();
+
+            fetch(
+                &config,
+                password,
+                &mut remote,
+                timestamp,
+                tag.clone(),
+                target,
+            );
         }
         Some(Commands::Test) => {
             println!("TEST ONLY");
@@ -98,33 +94,59 @@ fn main() {
             let tag = Some("TEST".to_string());
             let target = TempDir::new().unwrap();
 
-            append(&key, &config, &mut remote, timestamp, tag.clone());
-            fetch(&key, &mut remote, timestamp, tag.clone(), target.path());
+            let mut config_content = remote.write_multi_filename(Typ::TEST, "CONFIG").unwrap();
+            init(&mut config_content, password);
+
+            let mut config_content = remote.read_filename(Typ::TEST, "CONFIG").unwrap();
+            let mut config_str = String::new();
+            config_content.read_to_string(&mut config_str).unwrap();
+            let config: cli::Config = toml::from_str(&config_str).unwrap();
+
+            append(&config, password, &mut remote, timestamp, tag.clone());
+            fetch(
+                &config,
+                password,
+                &mut remote,
+                timestamp,
+                tag.clone(),
+                target.path(),
+            );
             list(&mut remote);
 
             // TODO: add support to picking an target/combo and verifying
-            verify(&key, &mut remote, timestamp, tag);
+            verify(&config, password, &mut remote, timestamp, tag);
         }
         None => (),
     }
 }
 
-fn init(config: &cli::Config, password: &str) {
-    // Generate a new key and encrypt it before putting it into the config file to be stored on disk
+fn init(config_content: &mut Box<dyn Write>, password: &str) {
+    let mut sample_config: cli::Config = toml::from_str(
+        r#"
+        symlink = true
+        same_fs = true
+
+        [[sources]]
+            include = ["docs"]
+            exclude = ["*.pyc"]
+            type = "AppendOnly"
+
+        "#,
+    )
+    .unwrap();
+    info!("CONFIG: {:?}", sample_config);
+
+    // Generate a new MemKey and convert it to DiskKey to store in the config
     let key = key::MemKey::new();
     let disk_key = key.to_disk_key(password);
+    sample_config.disk_key = Some(disk_key);
 
-    let mut config2 = config.clone();
-    config2.disk_key = Some(disk_key);
+    info!("CONFIG2: {:?}", sample_config);
+    let toml = toml::to_string(&sample_config).unwrap();
 
-    println!("CONFIG: {:?}", config2);
-
-    let toml = toml::to_string(&config2).unwrap();
-
-    println!("TOML:\n{}", toml);
-
-    let config3: cli::Config = toml::from_str(&toml).unwrap();
-    println!("CONFIG: {:?}", config3);
+    // Dump to output stream
+    config_content.write_all(toml.as_bytes()).unwrap();
+    config_content.flush().unwrap();
 }
 
 fn list<B: Remote>(remote: &mut B) {
@@ -144,8 +166,8 @@ fn list<B: Remote>(remote: &mut B) {
 }
 
 fn append<B: Remote>(
-    key: &key::MemKey,
     config: &cli::Config,
+    password: &str,
     remote: &mut B,
     timestamp: OffsetDateTime,
     tag: Option<String>,
@@ -154,13 +176,14 @@ fn append<B: Remote>(
     let target = config.sources.get(0).unwrap().include.get(0).unwrap();
     let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
     let _stype = config.sources.get(0).unwrap().source_type;
+    let key = config.disk_key.as_ref().unwrap().to_mem_key(password);
 
     // Store indexer + Map
     let (mut index_content, mut map_content) = write_snapshot(remote, timestamp, tag);
 
     // Perform an appending snapshot
     snapshot::append(
-        key,
+        &key,
         remote,
         &mut index_content,
         &mut map_content,
@@ -174,7 +197,8 @@ fn append<B: Remote>(
 }
 
 fn fetch<B: Remote>(
-    key: &key::MemKey,
+    config: &cli::Config,
+    password: &str,
     remote: &mut B,
     timestamp: OffsetDateTime,
     tag: Option<String>,
@@ -182,9 +206,10 @@ fn fetch<B: Remote>(
 ) {
     let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag.clone());
     let (_, mut map_content_2) = read_snapshot(remote, timestamp, tag);
+    let key = config.disk_key.as_ref().unwrap().to_mem_key(password);
 
     snapshot::fetch(
-        key,
+        &key,
         remote,
         &mut index_content,
         &mut map_content,
@@ -195,14 +220,16 @@ fn fetch<B: Remote>(
 
 // TODO: add a verify_all to validate the entire backup archive
 fn verify<B: Remote>(
-    key: &key::MemKey,
+    config: &cli::Config,
+    password: &str,
     remote: &mut B,
     timestamp: OffsetDateTime,
     tag: Option<String>,
 ) {
     let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag);
+    let key = config.disk_key.as_ref().unwrap().to_mem_key(password);
 
-    snapshot::verify(key, remote, &mut index_content, &mut map_content);
+    snapshot::verify(&key, remote, &mut index_content, &mut map_content);
 }
 
 fn read_snapshot<B: Remote>(

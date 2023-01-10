@@ -12,6 +12,10 @@ pub enum Typ {
     Map,
     Index,
     Pack,
+
+    // Test only, for storing testing related stuff
+    // TODO: REMOVE
+    TEST,
 }
 
 impl fmt::Display for Typ {
@@ -20,6 +24,7 @@ impl fmt::Display for Typ {
             Typ::Map => write!(f, "map"),
             Typ::Index => write!(f, "index"),
             Typ::Pack => write!(f, "pack"),
+            Typ::TEST => write!(f, "TEST"),
         }
     }
 }
