@@ -121,6 +121,8 @@ fn main() {
 }
 
 fn init(config_content: &mut Box<dyn Write>, password: &str) {
+    // TODO: make all of this much beter, ie maybe make it generate all of the needed
+    // stuff at the top then generate commented out sample section and then go from there
     let mut sample_config: cli::Config = toml::from_str(
         r#"
         symlink = true

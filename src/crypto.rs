@@ -198,7 +198,7 @@ mod test_encrypt_decrypt_roundtrip {
 
     #[test]
     fn small_data_roundtrip() {
-        let key = key::gen_key();
+        let key = key::MemKey::new();
         let data = b"Hello World!";
 
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
@@ -218,7 +218,7 @@ mod test_encrypt_decrypt_roundtrip {
 
     #[test]
     fn exactly_chunk_roundtrip() {
-        let key = key::gen_key();
+        let key = key::MemKey::new();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -248,7 +248,7 @@ mod test_encrypt_decrypt_roundtrip {
 
     #[test]
     fn big_data_roundtrip() {
-        let key = key::gen_key();
+        let key = key::MemKey::new();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -294,7 +294,7 @@ mod test_crypt_read {
 
     #[test]
     fn small_data_roundtrip() {
-        let key = key::gen_key();
+        let key = key::MemKey::new();
         let data = b"Hello World!";
 
         let mut in_data: Cursor<Vec<u8>> = Cursor::new(vec![]);
@@ -315,7 +315,7 @@ mod test_crypt_read {
         // Construct the decrypter and pass the ciphertext through
         let fheader = Header::from_slice(&dheader).unwrap();
 
-        let mut dec = Stream::init_pull(&fheader, &key).unwrap();
+        let mut dec = Stream::init_pull(&fheader, &key.enc_key()).unwrap();
         let (dec_data, tag) = dec.pull(&dciphertext[..], None).unwrap();
 
         assert_eq!(tag, Tag::Final);
@@ -324,7 +324,7 @@ mod test_crypt_read {
 
     #[test]
     fn big_data_roundtrip() {
-        let key = key::gen_key();
+        let key = key::MemKey::new();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 
@@ -347,7 +347,7 @@ mod test_crypt_read {
         let fheader = Header::from_slice(&dheader).unwrap();
 
         // Decrypter setup
-        let mut dec = Stream::init_pull(&fheader, &key).unwrap();
+        let mut dec = Stream::init_pull(&fheader, &key.enc_key()).unwrap();
 
         // TODO: improve? For now chunk it by chunk+abytes
         let mut dciphertext1: [u8; CHUNK_SIZE + ABYTES] = [0; CHUNK_SIZE + ABYTES];
@@ -377,7 +377,7 @@ mod test_crypt_read {
 
     #[test]
     fn awkward_write_final_buf() {
-        let key = key::gen_key();
+        let key = key::MemKey::new();
         let data: Vec<u8> = {
             let cap: usize = (1.5 * CHUNK_SIZE as f32) as usize;
 

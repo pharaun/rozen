@@ -171,8 +171,8 @@ mod test_ltvc_iterator {
     use std::io::{copy, Cursor, Seek, SeekFrom};
 
     fn test_hash() -> hash::Hash {
-        let id = key::gen_key();
-        hash::Hash::from(id.0)
+        let id = key::MemKey::new();
+        hash::Hash::from(id.hmac_key().0)
     }
 
     #[test]
