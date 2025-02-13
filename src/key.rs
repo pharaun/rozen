@@ -4,7 +4,7 @@ use sodiumoxide::crypto::secretstream;
 
 use std::fmt;
 
-use base64::{decode, encode};
+use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -152,31 +152,31 @@ impl fmt::Debug for DiskKey {
 }
 
 fn base64_slice<S: Serializer>(x: &[u8], s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_str(&encode(x))
+    s.serialize_str(&URL_SAFE.encode(x))
 }
 
 fn base64_slice_de<'de, D: Deserializer<'de>>(data: D) -> Result<Vec<u8>, D::Error> {
-    let s: &str = Deserialize::deserialize(data)?;
-    decode(s).map_err(serde::de::Error::custom)
+    let s: String = Deserialize::deserialize(data)?;
+    URL_SAFE.decode(s).map_err(serde::de::Error::custom)
 }
 
 fn base64_nonce<S: Serializer>(x: &secretbox::Nonce, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_str(&encode(x))
+    s.serialize_str(&URL_SAFE.encode(x))
 }
 
 fn base64_nonce_de<'de, D: Deserializer<'de>>(data: D) -> Result<secretbox::Nonce, D::Error> {
-    let s: &str = Deserialize::deserialize(data)?;
-    let v: Vec<u8> = decode(s).map_err(serde::de::Error::custom)?;
+    let s: String = Deserialize::deserialize(data)?;
+    let v: Vec<u8> = URL_SAFE.decode(s).map_err(serde::de::Error::custom)?;
     secretbox::Nonce::from_slice(&v[..]).ok_or_else(|| serde::de::Error::custom("Nonce"))
 }
 
 fn base64_salt<S: Serializer>(x: &argon2id13::Salt, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_str(&encode(x))
+    s.serialize_str(&URL_SAFE.encode(x))
 }
 
 fn base64_salt_de<'de, D: Deserializer<'de>>(data: D) -> Result<argon2id13::Salt, D::Error> {
-    let s: &str = Deserialize::deserialize(data)?;
-    let v: Vec<u8> = decode(s).map_err(serde::de::Error::custom)?;
+    let s: String = Deserialize::deserialize(data)?;
+    let v: Vec<u8> = URL_SAFE.decode(s).map_err(serde::de::Error::custom)?;
     argon2id13::Salt::from_slice(&v[..]).ok_or_else(|| serde::de::Error::custom("Salt"))
 }
 
