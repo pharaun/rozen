@@ -47,7 +47,7 @@ thiserror = "2"
 
 # S3 layer for the backend
 aws-config = "1.5"
-aws-sdk-s3 = "1.74"
+aws-sdk-s3 = "1.77"
 tokio = { version = "1", features = ["full"] }
 http = "*"
 bytes = "*"
