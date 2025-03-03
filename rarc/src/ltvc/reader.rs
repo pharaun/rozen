@@ -14,8 +14,9 @@ use byteorder::{ByteOrder, LittleEndian};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::buf::flush_buf;
-use crate::hash::Hash;
+use rcore::buf::flush_buf;
+use rcore::hash::Hash;
+
 use crate::ltvc::raw::LtvcError;
 use crate::ltvc::raw::LtvcReaderRaw;
 
@@ -164,8 +165,8 @@ impl<R: Read> Iterator for LtvcReader<R> {
 #[cfg(test)]
 mod test_ltvc_iterator {
     use super::*;
-    use crate::hash;
-    use crate::key;
+    use rcore::hash;
+    use rcore::key;
     use crate::ltvc::builder::LtvcBuilder;
     use crate::ltvc::CHUNK_SIZE;
     use std::io::{copy, Cursor, Seek, SeekFrom};

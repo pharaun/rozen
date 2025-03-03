@@ -4,7 +4,8 @@ use std::io::Read;
 use byteorder::{LittleEndian, ReadBytesExt};
 use thiserror::Error;
 
-use crate::hash::Checksum;
+use rcore::hash::Checksum;
+
 use crate::ltvc::MAX_CHUNK_SIZE;
 
 #[derive(Error, Debug)]
@@ -100,8 +101,8 @@ impl<R: Read> Iterator for LtvcReaderRaw<R> {
 #[cfg(test)]
 mod test_ltvc_raw_iterator {
     use super::*;
-    use crate::hash;
-    use crate::key;
+    use rcore::hash;
+    use rcore::key;
     use crate::ltvc::builder::LtvcBuilder;
     use crate::ltvc::CHUNK_SIZE;
     use std::io::{Cursor, Seek, SeekFrom};

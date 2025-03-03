@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use std::io::{copy, Read, Write};
 use zstd::stream::read::Decoder;
 
-use crate::crypto;
-use crate::hash;
-use crate::key;
+use rcore::crypto;
+use rcore::hash;
+use rcore::key;
+
 use crate::ltvc::indexing::HeaderIdx;
 use crate::ltvc::indexing::LtvcIndexing;
 use crate::ltvc::linear::EdatStream;

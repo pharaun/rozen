@@ -1,0 +1,28 @@
+[package]
+name = "rozen"
+version = "0.1.0"
+authors = ["Anja Berens <pharaun666@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+# Core dependencies
+rcore = { path = "../rcore" }
+
+# Archive builder library
+rarc = { path = "../rarc" }
+
+# remotes
+remote = { path = "../remote" }
+
+# FS Walker
+ignore = "0.4"
+
+# Compressor
+zstd = "0.13"
+
+# File Index
+rusqlite = { version = "0.33", features = ["bundled"] }
+tempfile = "3"
+
+# Logger
+log = "0.4"

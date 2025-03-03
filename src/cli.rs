@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use clap::{ArgGroup, Parser, Subcommand};
 
-use rozen::key::DiskKey;
+use rcore::key::DiskKey;
 
 #[derive(Parser)]
 #[command(name = "Rozen")]

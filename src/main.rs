@@ -8,14 +8,18 @@ use clap::Parser;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
+use log::info;
+
 mod cli;
 use crate::cli::Commands;
-use log::info;
-use rozen::crypto;
-use rozen::key;
-use rozen::remote;
-use rozen::remote::Remote;
-use rozen::remote::Typ;
+
+use rcore::crypto;
+use rcore::key;
+
+use remote;
+use remote::Remote;
+use remote::Typ;
+
 use rozen::snapshot;
 
 // TODO: should name various things like Index getting its own hashkey
@@ -36,11 +40,12 @@ fn main() {
     let cli = cli::Cli::parse();
 
     // In memory remote for data storage
-    let mut remote = remote::mem::MemoryVFS::new(Some("test.sqlite"));
-    let mut _remote = remote::mem::MemoryVFS::new(None);
+    #[cfg(all(feature = "sql", not(feature = "s3")))]
+    let mut remote = remote::sql::SqlVFS::new(Some("test.sqlite"));
 
-    // Build a s3 remote here
-    let mut _remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333").unwrap();
+    // Build a s3 remote here - Overrides the sql feature
+    #[cfg(feature = "s3")]
+    let mut remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333").unwrap();
 
     // TODO: should use a user given password, hardcode for ease of test right now
     let password = "ThisIsAPassword";

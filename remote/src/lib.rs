@@ -1,10 +1,13 @@
-pub mod mem;
+#[cfg(feature = "sql")]
+pub mod sql;
+
+#[cfg(feature = "s3")]
 pub mod s3;
 
 use std::fmt;
 use std::io::{Read, Write};
 
-use crate::hash;
+use rcore::hash;
 
 // Main types of files being stored
 #[derive(Clone, Copy)]

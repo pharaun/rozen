@@ -1,8 +1,9 @@
 use std::io::{Error, Read, Write};
 
-use crate::buf::fill_buf;
-use crate::hash::Checksum;
-use crate::hash::Hash;
+use rcore::buf::fill_buf;
+use rcore::hash::Checksum;
+use rcore::hash::Hash;
+
 use crate::ltvc::CHUNK_SIZE;
 
 pub struct LtvcBuilder<W: Write> {

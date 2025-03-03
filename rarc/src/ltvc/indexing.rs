@@ -3,9 +3,10 @@ use serde::Serialize;
 use std::io::{Read, Write};
 use zstd::stream::read::Encoder;
 
-use crate::crypto;
-use crate::hash;
-use crate::key;
+use rcore::crypto;
+use rcore::hash;
+use rcore::key;
+
 use crate::ltvc::builder::LtvcBuilder;
 
 // TODO: add header type, for initial impl this is Fidx only

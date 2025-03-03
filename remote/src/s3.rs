@@ -11,9 +11,10 @@ use tokio::runtime::Runtime;
 // Single threaded but we are on one thread here for now
 use std::rc::Rc;
 
-use crate::buf::flush_buf;
-use crate::remote::Remote;
-use crate::remote::Typ;
+use rcore::buf::flush_buf;
+
+use crate::Remote;
+use crate::Typ;
 
 pub struct S3 {
     client: Rc<Client>,

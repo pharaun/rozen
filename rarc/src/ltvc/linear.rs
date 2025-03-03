@@ -1,9 +1,10 @@
 use std::io::Read;
+use log::debug;
 
-use crate::hash;
+use rcore::hash;
+
 use crate::ltvc::reader::EdatReader;
 use crate::ltvc::reader::{LtvcEntry, LtvcReader};
-use log::debug;
 
 // Header of the Edat blocks (ie all Edat must be preceeded by)
 #[derive(Debug, Clone)]

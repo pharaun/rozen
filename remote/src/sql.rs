@@ -6,18 +6,19 @@ use std::io::{Cursor, Read, Write};
 // Single threaded but we are on one thread here for now
 use std::rc::Rc;
 
-use crate::buf::fill_buf;
-use crate::remote::Remote;
-use crate::remote::Typ;
+use rcore::buf::fill_buf;
+
+use crate::Remote;
+use crate::Typ;
 
 #[allow(clippy::identity_op)]
 const CHUNK_SIZE: usize = 1 * 1024;
 
-pub struct MemoryVFS {
+pub struct SqlVFS {
     conn: Rc<Connection>,
 }
 
-impl MemoryVFS {
+impl SqlVFS {
     pub fn new(filename: Option<&str>) -> Self {
         let conn = match filename {
             None => Connection::open_in_memory().unwrap(),
@@ -38,13 +39,13 @@ impl MemoryVFS {
         )
         .unwrap();
 
-        MemoryVFS {
+        SqlVFS {
             conn: Rc::new(conn),
         }
     }
 }
 
-impl Remote for MemoryVFS {
+impl Remote for SqlVFS {
     fn list_keys(&self, typ: Typ) -> Result<Box<dyn Iterator<Item = String>>, String> {
         let mut stmt = self
             .conn
@@ -177,14 +178,14 @@ fn write_filename<R: Read>(
 
 #[cfg(test)]
 mod tests {
-    use crate::remote::mem::MemoryVFS;
-    use crate::remote::mem::Remote;
-    use crate::remote::Typ;
+    use crate::sql::SqlVFS;
+    use crate::sql::Remote;
+    use crate::Typ;
     use std::io::Cursor;
 
     #[test]
     fn basic_read_write() {
-        let mut back = MemoryVFS::new(None);
+        let mut back = SqlVFS::new(None);
         let key = "test-key";
 
         let data: &[u8; 9] = b"Test Data";
@@ -202,7 +203,7 @@ mod tests {
 
     #[test]
     fn overwrite_read_write() {
-        let mut back = MemoryVFS::new(None);
+        let mut back = SqlVFS::new(None);
         let key = "test-key";
 
         let data: &[u8; 9] = b"Test Data";

@@ -1,0 +1,23 @@
+[package]
+name = "rarc"
+version = "0.1.0"
+authors = ["Anja Berens <pharaun666@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+# Core dependencies
+rcore = { path = "../rcore" }
+
+# Compressor
+zstd = "0.13"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+bincode = "1.3"
+byteorder = "1"
+
+# Error layer for handling error creation
+thiserror = "2"
+
+# Logger
+log = "0.4"

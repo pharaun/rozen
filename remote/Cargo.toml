@@ -1,0 +1,23 @@
+[package]
+name = "remote"
+version = "0.1.0"
+authors = ["Anja Berens <pharaun666@gmail.com>"]
+edition = "2021"
+
+[features]
+s3 = ["aws-config", "aws-sdk-s3", "tokio", "bytes"]
+sql = ["rusqlite", "iter-read"]
+
+[dependencies]
+# Core dependencies
+rcore = { path = "../rcore" }
+
+# Mem backend
+rusqlite = { version = "0.33", features = ["bundled"], optional = true }
+iter-read = { version = "1", optional = true }
+
+# S3 layer for the backend
+aws-config = { version = "1.5", optional = true }
+aws-sdk-s3 = { version = "1.77", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+bytes = { version = "*", optional = true }

@@ -2,7 +2,6 @@ use std::convert::TryInto;
 use std::fmt;
 use std::io::{copy, Read};
 
-use crate::key;
 use std::hash::Hash as StdHash;
 use std::hash::Hasher as StdHasher;
 use twox_hash::XxHash32;
@@ -12,6 +11,8 @@ use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
+
+use crate::key;
 
 // Make the checksum api be similiar to blake3's
 pub struct Checksum(XxHash32);

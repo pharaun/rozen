@@ -1,56 +1,46 @@
 [package]
-name = "rozen"
+name = "rozen-bin"
 version = "0.1.0"
 authors = ["Anja Berens <pharaun666@gmail.com>"]
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace]
+
+[features]
+default = ["sql"]
+s3 = ["remote/s3"]
+sql = ["remote/sql"]
 
 [dependencies]
+# Core dependencies
+rcore = { path = "rcore" }
+
+# Archive builder library
+rarc = { path = "rarc" }
+
+# Backend - Disk/S3/Etc
+remote = { path = "remote" }
+
+# Rozen
+rozen = { path = "rozen" }
 
 # FS Walker
 ignore = "0.4"
 
-# Compressor
-zstd = "0.13"
-
-# Hasher
-blake3 = "1"
-
-# Encryption -> libsodium-sys-stable = "1.22.2"
-sodiumoxide = "0.2.7"
-hex = "0.4"
-
 # File Index
-rusqlite = { version = "0.33", features = ["bundled"] }
 tempfile = "3"
-iter-read = "1"
 
 # Time library
 time = { version = "0.3", features = ["formatting"] }
 
 # Configuration
 toml = "0.8"
-base64 = "0.22"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-bincode = "1.3"
-twox-hash = "2"
-byteorder = "1"
-
-# Error layer for handling error creation
-thiserror = "2"
-
-# S3 layer for the backend
-aws-config = "1.5"
-aws-sdk-s3 = "1.77"
-tokio = { version = "1", features = ["full"] }
-http = "*"
-bytes = "*"
 
 # Logger
 log = "0.4"
