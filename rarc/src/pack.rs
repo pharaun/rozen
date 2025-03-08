@@ -80,7 +80,8 @@ impl PackOut {
                     copy(&mut und, &mut idx_buf).unwrap();
 
                     // Deserialize the index
-                    chunk_idx = bincode::deserialize(&idx_buf).unwrap();
+                    let config = bincode::config::standard().with_little_endian().with_variable_int_encoding();
+                    chunk_idx = bincode::serde::decode_from_slice(&idx_buf, config).unwrap().0;
                     debug!("AIDX - EDAT - length: {}", chunk_idx.len());
                 }
 

@@ -13,7 +13,7 @@ zstd = "0.13"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-bincode = "1.3"
+bincode = { version = "2.0", features = ["serde"] }
 byteorder = "1"
 
 # Error layer for handling error creation

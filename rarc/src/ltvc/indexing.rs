@@ -90,7 +90,8 @@ impl<W: Write> LtvcIndexing<W> {
 
             self.idx += self.inner.write_aidx().unwrap();
 
-            let index = bincode::serialize(&self.h_idx).unwrap();
+            let config = bincode::config::standard().with_little_endian().with_variable_int_encoding();
+            let index = bincode::serde::encode_to_vec(&self.h_idx, config).unwrap();
             let comp = Encoder::new(&index[..], 21).unwrap();
             let mut enc = crypto::encrypt(key, comp).unwrap();
 
@@ -102,5 +103,36 @@ impl<W: Write> LtvcIndexing<W> {
 
         // Flush to signal to the backend that its done
         self.inner.into_inner().flush().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod serialize {
+    use super::HeaderIdx;
+
+    use rcore::key::MemKey;
+
+    #[test]
+    fn small_data_roundtrip() {
+        let idx: Vec<HeaderIdx> = {
+            let key = MemKey::new();
+
+            vec![
+                HeaderIdx {
+                    typ: *b"FHDR",
+                    hash: key.gen_id(),
+                    start_idx: 0,
+                    length: 10,
+                }
+            ]
+        };
+
+        // Test encode options
+        let config = bincode::config::standard().with_little_endian().with_variable_int_encoding();
+        let index = bincode::serde::encode_to_vec(&idx, config).unwrap();
+
+        println!("{:x?}", index);
+
+        assert!(false);
     }
 }
