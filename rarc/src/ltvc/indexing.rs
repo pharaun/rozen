@@ -10,42 +10,41 @@ use rcore::key;
 use crate::ltvc::builder::LtvcBuilder;
 
 // Test imports
+use integer_encoding::VarIntReader;
+use integer_encoding::VarIntWriter;
 use binrw::binrw;
-use borsh::BorshDeserialize;
-use borsh::BorshSerialize;
 
 // TODO: add header type, for initial impl this is Fidx only
 #[binrw]
 #[brw(little)]
 #[derive(Serialize, Deserialize, Debug)]
-#[derive(BorshSerialize, BorshDeserialize)]
 pub struct HeaderIdx {
     pub typ: [u8; 4],
 
     #[bw(map = |x| x.as_bytes())]
     #[br(map = |x: [u8; 32]| x.into())]
-    #[borsh(deserialize_with = "deserialize_hash", serialize_with = "serialize_hash")]
     pub hash: hash::Hash,
 
-    #[bw(map = |x| *x as u32)]
-    #[br(map = |x: u32| x as usize)]
+    #[br(parse_with = varint_parser)]
+    #[bw(write_with = varint_writer)]
     pub start_idx: usize,
 
-    #[bw(map = |x| *x as u32)]
-    #[br(map = |x: u32| x as usize)]
+    #[br(parse_with = varint_parser)]
+    #[bw(write_with = varint_writer)]
     pub length: usize,
 }
 
-// Borsh
-fn deserialize_hash<R: borsh::io::Read>(reader: &mut R) -> Result<hash::Hash, borsh::io::Error> {
-    let hash: [u8; 32] = borsh::BorshDeserialize::deserialize_reader(reader)?;
-    Ok(hash.into())
+// Test type for varint
+#[binrw::parser(reader)]
+fn varint_parser() -> binrw::BinResult<usize> {
+    let ret: u32 = reader.read_varint()?;
+    binrw::BinResult::Ok(ret as usize)
 }
 
-fn serialize_hash<W: borsh::io::Write>(hash: &hash::Hash, writer: &mut W) -> Result<(), borsh::io::Error> {
-    let hash: &[u8; 32] = hash.as_bytes();
-    borsh::BorshSerialize::serialize(hash, writer)?;
-    Ok(())
+#[binrw::writer(writer)]
+fn varint_writer(integer: &usize) -> binrw::BinResult<()> {
+    writer.write_varint(*integer)?;
+    binrw::BinResult::Ok(())
 }
 
 pub struct LtvcIndexing<W: Write> {
@@ -142,20 +141,46 @@ mod serialize {
 
     use std::io::Cursor;
     use binrw::BinWrite;
-    use bcs::to_bytes;
 
     use rcore::key::MemKey;
 
-    fn data_gen() -> Vec<HeaderIdx> {
+    fn file_gen(start: usize, length: usize) -> HeaderIdx {
         let key = MemKey::new();
+        HeaderIdx {
+            typ: *b"FHDR",
+            hash: key.gen_id(),
+            start_idx: start,
+            length,
+        }
+    }
 
+    fn snapshot_gen(start: usize, length: usize) -> HeaderIdx {
+        let key = MemKey::new();
+        HeaderIdx {
+            typ: *b"SHDR",
+            hash: key.gen_id(),
+            start_idx: start,
+            length,
+        }
+    }
+
+    fn pack_idx_gen(start: usize, length: usize) -> HeaderIdx {
+        let key = MemKey::new();
+        HeaderIdx {
+            typ: *b"PIDX",
+            hash: key.gen_id(),
+            start_idx: start,
+            length,
+        }
+    }
+
+    fn data_gen() -> Vec<HeaderIdx> {
         vec![
-            HeaderIdx {
-                typ: *b"FHDR",
-                hash: key.gen_id(),
-                start_idx: 0,
-                length: 10,
-            }
+            file_gen(0, 10),
+            file_gen(20, u32::MAX as usize),
+            file_gen(u32::MAX as usize, u64::MAX as usize),
+            snapshot_gen(123, 0),
+            pack_idx_gen(100, 1),
         ]
     }
 
@@ -173,31 +198,6 @@ mod serialize {
     }
 
     #[test]
-    fn small_data_cbor() {
-        let idx = data_gen();
-
-        // Test encode options
-        let mut index = Vec::new();
-        ciborium::into_writer(&idx, &mut index).unwrap();
-
-        println!("{}", hex::encode(&index));
-
-        assert!(false);
-    }
-
-    #[test]
-    fn small_data_msgpack() {
-        let idx = data_gen();
-
-        // Test encode options
-        let index = rmp_serde::to_vec(&idx).unwrap();
-
-        println!("{}", hex::encode(&index));
-
-        assert!(false);
-    }
-
-    #[test]
     fn small_data_binrw() {
         let idx = data_gen();
 
@@ -206,30 +206,6 @@ mod serialize {
         idx.write(&mut index).unwrap();
 
         println!("{}", hex::encode(index.into_inner()));
-
-        assert!(false);
-    }
-
-    #[test]
-    fn small_data_bcs() {
-        let idx = data_gen();
-
-        // Test encode options
-        let index = to_bytes(&idx).unwrap();
-
-        println!("{}", hex::encode(index));
-
-        assert!(false);
-    }
-
-    #[test]
-    fn small_data_borsh() {
-        let idx = data_gen();
-
-        // Test encode options
-        let index = borsh::to_vec(&idx).unwrap();
-
-        println!("{}", hex::encode(index));
 
         assert!(false);
     }
