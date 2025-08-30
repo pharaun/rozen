@@ -8,14 +8,14 @@ use zstd::stream::read::Encoder;
 
 use rusqlite::Connection;
 
-use rcore::crypto;
-use rcore::hash;
-use rcore::key;
+use crate::rcore::crypto;
+use crate::rcore::hash;
+use crate::rcore::key;
 
-use rarc::ltvc::indexing::LtvcIndexing;
-use rarc::ltvc::linear::EdatStream;
-use rarc::ltvc::linear::Header;
-use rarc::ltvc::linear::LtvcLinear;
+use crate::rarc::ltvc::indexing::LtvcIndexing;
+use crate::rarc::ltvc::linear::EdatStream;
+use crate::rarc::ltvc::linear::Header;
+use crate::rarc::ltvc::linear::LtvcLinear;
 
 // TODO:
 // - Figure out a better implementation, the sqlite is a shared resource, but we want

@@ -4,9 +4,9 @@ use thiserror::Error;
 
 use sodiumoxide::crypto::secretstream::{Header, Pull, Push, Stream, Tag, ABYTES};
 
-use crate::buf::fill_buf;
-use crate::buf::flush_buf;
-use crate::key;
+use crate::rcore::buf::fill_buf;
+use crate::rcore::buf::flush_buf;
+use crate::rcore::key;
 
 // 8Kb encryption frame buffer
 const CHUNK_SIZE: usize = 8 * 1024;

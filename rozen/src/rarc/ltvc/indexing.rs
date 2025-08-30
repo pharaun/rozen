@@ -3,11 +3,11 @@ use serde::Serialize;
 use std::io::{Read, Write};
 use zstd::stream::read::Encoder;
 
-use rcore::crypto;
-use rcore::hash;
-use rcore::key;
+use crate::rcore::crypto;
+use crate::rcore::hash;
+use crate::rcore::key;
 
-use crate::ltvc::builder::LtvcBuilder;
+use crate::rarc::ltvc::builder::LtvcBuilder;
 
 // Test imports
 use integer_encoding::VarIntReader;

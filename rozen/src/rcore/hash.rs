@@ -12,7 +12,7 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 
-use crate::key;
+use crate::rcore::key;
 
 // Make the checksum api be similiar to blake3's
 pub struct Checksum(XxHash32);

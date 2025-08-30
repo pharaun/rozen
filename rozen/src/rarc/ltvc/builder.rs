@@ -1,10 +1,10 @@
 use std::io::{Error, Read, Write};
 
-use rcore::buf::fill_buf;
-use rcore::hash::Checksum;
-use rcore::hash::Hash;
+use crate::rcore::buf::fill_buf;
+use crate::rcore::hash::Checksum;
+use crate::rcore::hash::Hash;
 
-use crate::ltvc::CHUNK_SIZE;
+use crate::rarc::ltvc::CHUNK_SIZE;
 
 pub struct LtvcBuilder<W: Write> {
     inner: W,

@@ -8,19 +8,10 @@ edition = "2021"
 
 [features]
 default = ["sql"]
-s3 = ["remote/s3"]
-sql = ["remote/sql"]
+s3 = ["rozen/s3"]
+sql = ["rozen/sql"]
 
 [dependencies]
-# Core dependencies
-rcore = { path = "rcore" }
-
-# Archive builder library
-rarc = { path = "rarc" }
-
-# Backend - Disk/S3/Etc
-remote = { path = "remote" }
-
 # Rozen
 rozen = { path = "rozen" }
 

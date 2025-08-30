@@ -4,9 +4,9 @@ use std::io::Read;
 use byteorder::{LittleEndian, ReadBytesExt};
 use thiserror::Error;
 
-use rcore::hash::Checksum;
+use crate::rcore::hash::Checksum;
 
-use crate::ltvc::MAX_CHUNK_SIZE;
+use crate::rarc::ltvc::MAX_CHUNK_SIZE;
 
 #[derive(Error, Debug)]
 pub enum LtvcError {

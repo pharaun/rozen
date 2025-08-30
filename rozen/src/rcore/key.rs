@@ -10,7 +10,7 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 
-use crate::hash::Hash;
+use crate::rcore::hash::Hash;
 
 // Possible Scheme:
 //  Sym: (New sub-key based off master key + salt... and salt is new for each chunk...)

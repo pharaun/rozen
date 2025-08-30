@@ -7,7 +7,7 @@ pub mod s3;
 use std::fmt;
 use std::io::{Read, Write};
 
-use rcore::hash;
+use crate::rcore::hash;
 
 // Main types of files being stored
 #[derive(Clone, Copy)]

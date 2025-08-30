@@ -8,14 +8,14 @@ use std::collections::HashMap;
 use std::fs::create_dir_all;
 use std::fs::File;
 
-use rcore::crypto;
-use rcore::hash;
-use rcore::key;
+use crate::rcore::crypto;
+use crate::rcore::hash;
+use crate::rcore::key;
 
-use rarc::pack::PackOut;
+use crate::rarc::pack::PackOut;
 
-use remote::Remote;
-use remote::Typ;
+use crate::remote::Remote;
+use crate::remote::Typ;
 
 use crate::cas::ObjectFetch;
 use crate::cas::ObjectStore;

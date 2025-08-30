@@ -14,11 +14,11 @@ use byteorder::{ByteOrder, LittleEndian};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use rcore::buf::flush_buf;
-use rcore::hash::Hash;
+use crate::rcore::buf::flush_buf;
+use crate::rcore::hash::Hash;
 
-use crate::ltvc::raw::LtvcError;
-use crate::ltvc::raw::LtvcReaderRaw;
+use crate::rarc::ltvc::raw::LtvcError;
+use crate::rarc::ltvc::raw::LtvcReaderRaw;
 
 pub struct LtvcReader<R: Read> {
     inner: Rc<RefCell<Peekable<LtvcReaderRaw<R>>>>,

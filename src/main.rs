@@ -13,12 +13,12 @@ use log::info;
 mod cli;
 use crate::cli::Commands;
 
-use rcore::crypto;
-use rcore::key;
+use rozen::rcore::crypto;
+use rozen::rcore::key;
 
-use remote;
-use remote::Remote;
-use remote::Typ;
+use rozen::remote;
+use rozen::remote::Remote;
+use rozen::remote::Typ;
 
 use rozen::snapshot;
 

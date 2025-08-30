@@ -4,25 +4,59 @@ version = "0.1.0"
 authors = ["Anja Berens <pharaun666@gmail.com>"]
 edition = "2021"
 
+[features]
+s3 = ["aws-config", "aws-sdk-s3", "tokio", "bytes"]
+sql = ["iter-read"]
+#sql = ["rusqlite", "iter-read"]
+
 [dependencies]
-# Core dependencies
-rcore = { path = "../rcore" }
-
-# Archive builder library
-rarc = { path = "../rarc" }
-
-# remotes
-remote = { path = "../remote" }
-
-# FS Walker
-ignore = "0.4"
-
-# Compressor
-zstd = "0.13"
-
 # File Index
 rusqlite = { version = "0.33", features = ["bundled"] }
 tempfile = "3"
-
+# Compressor
+zstd = "0.13"
+# FS Walker
+ignore = "0.4"
 # Logger
 log = "0.4"
+# Error layer for handling error creation
+thiserror = "2"
+# Serialization
+serde = { version = "1", features = ["derive"] }
+
+########################################
+# rcore - Core dependencies
+########################################
+# Hasher
+blake3 = "1"
+# Encryption -> libsodium-sys-stable = "1.22.2"
+sodiumoxide = "0.2.7"
+# Configuration
+base64 = "0.22"
+# Serialization
+twox-hash = "2"
+
+########################################
+# rarc - Archive builder library
+########################################
+# Serialization
+byteorder = "1"
+# Serialization of the idx for archives
+bincode = { version = "2.0", features = ["serde"] }
+# Replacement serialization of the idx for archives
+binrw = "0.14"
+integer-encoding = "4.0.2"
+# Binary string debugging
+hex = "0.4"
+
+########################################
+# remotes - Remotes
+########################################
+# Mem backend
+#rusqlite = { version = "0.33", features = ["bundled"], optional = true }
+iter-read = { version = "1", optional = true }
+# S3 layer for the backend
+aws-config = { version = "1.5", optional = true }
+aws-sdk-s3 = { version = "1.78", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+bytes = { version = "*", optional = true }

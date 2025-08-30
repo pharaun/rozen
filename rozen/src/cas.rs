@@ -4,14 +4,14 @@ use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
 
-use rcore::hash;
-use rcore::key;
+use crate::rcore::hash;
+use crate::rcore::key;
 
-use rarc::pack::PackBuilder;
-use rarc::pack::PackOut;
+use crate::rarc::pack::PackBuilder;
+use crate::rarc::pack::PackOut;
 
-use remote::Remote;
-use remote::Typ;
+use crate::remote::Remote;
+use crate::remote::Typ;
 
 use crate::sql::Map;
 

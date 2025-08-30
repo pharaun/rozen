@@ -6,10 +6,10 @@ use std::io::{Cursor, Read, Write};
 // Single threaded but we are on one thread here for now
 use std::rc::Rc;
 
-use rcore::buf::fill_buf;
+use crate::rcore::buf::fill_buf;
 
-use crate::Remote;
-use crate::Typ;
+use crate::remote::Remote;
+use crate::remote::Typ;
 
 #[allow(clippy::identity_op)]
 const CHUNK_SIZE: usize = 1 * 1024;
