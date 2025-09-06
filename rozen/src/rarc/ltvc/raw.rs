@@ -101,10 +101,10 @@ impl<R: Read> Iterator for LtvcReaderRaw<R> {
 #[cfg(test)]
 mod test_ltvc_raw_iterator {
     use super::*;
-    use rcore::hash;
-    use rcore::key;
-    use crate::ltvc::builder::LtvcBuilder;
-    use crate::ltvc::CHUNK_SIZE;
+    use crate::rcore::hash;
+    use crate::rcore::key;
+    use crate::rarc::ltvc::builder::LtvcBuilder;
+    use crate::rarc::ltvc::CHUNK_SIZE;
     use std::io::{Cursor, Seek, SeekFrom};
 
     fn test_hash() -> hash::Hash {

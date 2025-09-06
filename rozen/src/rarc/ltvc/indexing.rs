@@ -142,7 +142,7 @@ mod serialize {
     use std::io::Cursor;
     use binrw::BinWrite;
 
-    use rcore::key::MemKey;
+    use crate::rcore::key::MemKey;
 
     fn file_gen(start: usize, length: usize) -> HeaderIdx {
         let key = MemKey::new();
