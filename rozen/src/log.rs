@@ -15,9 +15,9 @@ use binrw::{
     Endian,
     binrw, binwrite,
 };
-use binrw::io::{Read, Seek, Write};
+use binrw::io::{Read, Seek, Write, SeekFrom};
 use binrw::meta::{
-    EndianKind, WriteEndian,
+    EndianKind, WriteEndian, ReadEndian,
 };
 
 // TODO: AWS and disk stuff
@@ -38,32 +38,59 @@ pub struct StrataHeader {
 }
 
 #[derive(Debug)]
-pub struct ChecksumWrapper {
-    inner: Grain,
+pub struct ChecksumWrapper<T> {
+    inner: T,
 }
 
-//    #[br(temp, assert(checksum == s.finalize(), "bad checksum: {:#x?} != {:#x?}", checksum, s.finalize()))]
-//impl BinRead for ChecksumWrapper {
-//    type Args<'a> = ();
-//
-//    fn read_options<R: Read + Seek>(
-//        reader: &mut R,
-//        endian: Endian,
-//        args: Self::Args<'_>,
-//    ) -> BinResult<Self> {
-//        let key = from_hex("38236e791c18434a1fad1dd6f96c4ce0d58bb69ca04d80d8e1325d7cb20476be").unwrap();
-//        Ok(Self {
-//            inner: Grain {
-//                grain_id: 1,
-//                key: key,
-//                part: 1,
-//            }
-//        })
-//    }
-//}
+impl<T> BinRead for ChecksumWrapper<T>
+where
+    T: for <'a> BinRead<Args<'a> = ()>
+{
+    type Args<'a> = T::Args<'a>;
 
-impl BinWrite for ChecksumWrapper {
-    type Args<'a> = ();
+    fn read_options<R: Read + Seek>(
+        reader: &mut R,
+        endian: Endian,
+        args: Self::Args<'_>,
+    ) -> BinResult<Self> {
+        let start = reader.stream_position()?;
+        let parsed_data = <T>::read_options(reader, endian, args)?;
+        let end = reader.stream_position()?;
+
+        let computed_checksum = {
+            reader.seek(SeekFrom::Start(start));
+            let mut raw_data: Vec<u8> = vec![0; (end-start) as usize];
+            reader.read_exact(&mut raw_data[..])?;
+
+            let mut checksum = hash::Checksum::new();
+            checksum.update(&raw_data);
+            checksum.finalize()
+        };
+        let parsed_checksum = <u32>::read_options(reader, endian, args)?;
+
+        // Validate the checksum
+        if computed_checksum == parsed_checksum {
+            Ok(ChecksumWrapper {
+                inner: parsed_data,
+            })
+        } else {
+            Err(binrw::Error::Custom {
+                pos: end,
+                err: Box::new(format!("Bad Checksum: {:#x?} != {:#x?}", computed_checksum, parsed_checksum).to_string()),
+            })
+        }
+    }
+}
+
+impl<T: ReadEndian> ReadEndian for ChecksumWrapper<T> {
+    const ENDIAN: EndianKind = <T as ReadEndian>::ENDIAN;
+}
+
+impl<T> BinWrite for ChecksumWrapper<T>
+where
+    T: for <'a> BinWrite<Args<'a> = ()>
+{
+    type Args<'a> = T::Args<'a>;
 
     fn write_options<W: Write + Seek>(
         &self,
@@ -89,8 +116,8 @@ impl BinWrite for ChecksumWrapper {
     }
 }
 
-impl WriteEndian for ChecksumWrapper {
-    const ENDIAN: EndianKind = EndianKind::Endian(Endian::Little);
+impl<T: WriteEndian> WriteEndian for ChecksumWrapper<T> {
+    const ENDIAN: EndianKind = <T as WriteEndian>::ENDIAN;
 }
 
 
@@ -167,35 +194,22 @@ mod serialize {
 
     #[test]
     fn grain() {
-        let key = from_hex("38236e791c18434a1fad1dd6f96c4ce0d58bb69ca04d80d8e1325d7cb20476be").unwrap();
-
-        // Manually "write out" data bits to get a checksum
-        let mut manual = Cursor::new(Vec::new());
-        let one = (1 as u32).to_le_bytes();
-        manual.write(&one);
-        manual.write(key.as_bytes());
-        manual.write(&one);
-
-        let mut checksum = Checksum::new();
-        checksum.update(&manual.clone().into_inner());
-        manual.write(&checksum.finalize().to_le_bytes());
-        println!("manual: {:#x?} - {:#x?}", checksum.finalize(), u32::from_be_bytes(checksum.finalize().to_le_bytes()));
-        println!("{}", hex::encode(manual.into_inner()));
+        let key = MemKey::new();
 
         let mut strata = Cursor::new(Vec::new());
         ChecksumWrapper {
             inner: Grain {
                 grain_id: 1,
-                key: key,
+                key: key.gen_id(),
                 part: 1,
                 //data: vec![0, 1, 2, 3, 4],
             },
         }.write(&mut strata).unwrap();
         println!("{}", hex::encode(strata.clone().into_inner()));
 
-    //    strata.seek(SeekFrom::Start(0));
-    //    let grain = ChecksumWrapper::read(&mut strata);
-    //    println!("{:?}", grain);
+        strata.seek(SeekFrom::Start(0));
+        let grain = ChecksumWrapper::<Grain>::read(&mut strata);
+        println!("{:?}", grain);
 
         assert!(false);
     }
