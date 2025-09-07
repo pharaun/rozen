@@ -44,7 +44,7 @@ byteorder = "1"
 # Serialization of the idx for archives
 bincode = { version = "2.0", features = ["serde"] }
 # Replacement serialization of the idx for archives
-binrw = "0.14"
+binrw = "0.15"
 integer-encoding = "4.0.2"
 # Binary string debugging
 hex = "0.4"

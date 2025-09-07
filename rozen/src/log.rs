@@ -18,8 +18,7 @@ use binrw::binwrite;
 // length only? if They must be the same length only then we can't
 
 #[binrw]
-#[brw(little)]
-#[brw(magic = b"ROZ-STRA")]
+#[brw(little, magic = b"ROZ-STRA")]
 #[derive(Debug)]
 pub struct StrataHeader {
     pub version: u8,
@@ -29,9 +28,7 @@ pub struct StrataHeader {
 }
 
 #[binrw]
-#[brw(little)]
-#[bw(stream = w, map_stream = TestSum::<_>::new)]
-#[br(stream = r, map_stream = TestSum::<_>::new)]
+#[brw(little, stream = s, map_stream = TestSum::<_>::new)]
 #[derive(Debug)]
 pub struct Grain {
     pub grain_id: u32,
@@ -39,8 +36,16 @@ pub struct Grain {
     pub part: u32,
     //pub data: Vec<u8>,
 
-    #[bw(calc(w.check()))]
-    #[br(temp, assert(checksum == r.check(), "bad checksum: {:#x?} != {:#x?}", checksum, r.check()))]
+    // TODO: I think what I need is a wrapper type that takes the whole grain, checksums it, or
+    // check the checksum and cache/parse it concurrently since this case isn't going to work
+    // without some weirdness
+    //
+    // see: https://github.com/jam1garner/binrw/discussions/237
+
+    // TODO: need to figure out how to get the checksum code to skip the last "4 bytes" in the
+    // checksum calculation....
+    #[br(temp, assert(checksum == s.finalize(), "bad checksum: {:#x?} != {:#x?}", checksum, s.finalize()))]
+    #[bw(calc(s.finalize()))]
     checksum: u32,
 }
 
@@ -59,7 +64,7 @@ impl<S: binrw::io::Seek> TestSum<S> {
         }
     }
 
-    pub fn check(&self) -> u32 {
+    pub fn finalize(&self) -> u32 {
         self.checksum.finalize()
     }
 }
@@ -87,10 +92,15 @@ impl<S: binrw::io::Read + binrw::io::Seek> binrw::io::Read for TestSum<S> {
         let position = self.inner.stream_position()?;
         let size = self.inner.read(buf)?;
 
+        println!("read - {:#x?} - {:?}", buf, position);
+        // TODO: checksum is probs ingesting itself into the checksum process
+
         // Make sure that read bytes aren't checksummed more than once.
-        for (i, byte) in buf[..size].iter().enumerate() {
-            if position + i as u64 >= self.position {
-                self.checksum.update(&[*byte]);
+        if position != 40 {
+            for (i, byte) in buf[..size].iter().enumerate() {
+                if position + i as u64 >= self.position {
+                    self.checksum.update(&[*byte]);
+                }
             }
         }
         self.position = position + size as u64;
@@ -139,6 +149,7 @@ mod serialize {
 
     use crate::rcore::key::MemKey;
     use crate::rcore::hash::Checksum;
+    use crate::rcore::hash::from_hex;
 
     #[test]
     fn strata_header() {
@@ -159,7 +170,7 @@ mod serialize {
 
     #[test]
     fn grain() {
-        let key = (MemKey::new()).gen_id();
+        let key = from_hex("38236e791c18434a1fad1dd6f96c4ce0d58bb69ca04d80d8e1325d7cb20476be").unwrap();
 
         // Manually "write out" data bits to get a checksum
         let mut manual = Cursor::new(Vec::new());
@@ -171,7 +182,7 @@ mod serialize {
         let mut checksum = Checksum::new();
         checksum.update(&manual.clone().into_inner());
         manual.write(&checksum.finalize().to_le_bytes());
-        println!("manual: {:#x?}", checksum.finalize());
+        println!("manual: {:#x?} - {:#x?}", checksum.finalize(), u32::from_be_bytes(checksum.finalize().to_le_bytes()));
         println!("{}", hex::encode(manual.into_inner()));
 
         let mut strata = Cursor::new(Vec::new());
