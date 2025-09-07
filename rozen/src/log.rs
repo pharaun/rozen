@@ -1,19 +1,15 @@
-use serde::Deserialize;
-use serde::Serialize;
 use std::io::Cursor;
 
 use crate::rcore::hash;
-use crate::rcore::hash::from_hex;
-use crate::rcore::key;
 
-use integer_encoding::VarIntReader;
-use integer_encoding::VarIntWriter;
+//use integer_encoding::VarIntReader;
+//use integer_encoding::VarIntWriter;
 
 use binrw::{
     BinRead, BinWrite,
     BinResult,
     Endian,
-    binrw, binwrite,
+    binrw,
 };
 use binrw::io::{Read, Seek, Write, SeekFrom};
 use binrw::meta::{
@@ -29,7 +25,7 @@ use binrw::meta::{
 
 #[binrw]
 #[brw(little, magic = b"ROZ-STRA")]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct StrataHeader {
     pub version: u8,
     pub basin_id: u8,
@@ -37,7 +33,7 @@ pub struct StrataHeader {
     // TODO: add bits for encryption & compression settings
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ChecksumWrapper<T> {
     inner: T,
 }
@@ -58,7 +54,7 @@ where
         let end = reader.stream_position()?;
 
         let computed_checksum = {
-            reader.seek(SeekFrom::Start(start));
+            let _ = reader.seek(SeekFrom::Start(start));
             let mut raw_data: Vec<u8> = vec![0; (end-start) as usize];
             reader.read_exact(&mut raw_data[..])?;
 
@@ -124,15 +120,23 @@ impl<T: WriteEndian> WriteEndian for ChecksumWrapper<T> {
 
 #[binrw]
 #[brw(little)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Grain {
     pub grain_id: u32,
     pub key: hash::Hash,
     pub part: u32,
-    //pub data: Vec<u8>,
+
+    #[br(temp)]
+    #[bw(calc = data.len() as u32)]
+    data_len: u32,
+
+    // TODO: consider doing the data bits separately
+    // and/or its own thing for effiency reasons so that
+    // we don't end up copying several megabytes buffers of data,
+    // but for now this will do
+    #[br(count = data_len)]
+    pub data: Vec<u8>,
 }
-
-
 
 
 #[binrw]
@@ -166,51 +170,47 @@ mod serialize {
     use std::io::Cursor;
     use std::io::Seek;
     use std::io::SeekFrom;
-    use std::io::Write;
 
     use binrw::BinWrite;
     use binrw::BinRead;
 
     use crate::rcore::key::MemKey;
-    use crate::rcore::hash::Checksum;
-    use crate::rcore::hash::from_hex;
 
     #[test]
-    fn strata_header() {
+    fn test_strata_header() {
+        let data = ChecksumWrapper {
+            inner: StrataHeader {
+                version: 1,
+                basin_id: 1,
+                strata_id: 1,
+            }
+        };
+
         let mut strata = Cursor::new(Vec::new());
-        StrataHeader {
-            version: 1,
-            basin_id: 1,
-            strata_id: 1,
-        }.write(&mut strata).unwrap();
-        println!("{}", hex::encode(strata.clone().into_inner()));
+        data.write(&mut strata).unwrap();
+        strata.seek(SeekFrom::Start(0)).unwrap();
+        let header = ChecksumWrapper::<StrataHeader>::read(&mut strata).unwrap();
 
-        strata.seek(SeekFrom::Start(0));
-        let header = StrataHeader::read(&mut strata);
-        println!("{:?}", header);
-
-        assert!(false);
+        assert_eq!(data, header);
     }
 
     #[test]
-    fn grain() {
+    fn test_grain() {
         let key = MemKey::new();
-
-        let mut strata = Cursor::new(Vec::new());
-        ChecksumWrapper {
+        let data = ChecksumWrapper {
             inner: Grain {
                 grain_id: 1,
                 key: key.gen_id(),
                 part: 1,
-                //data: vec![0, 1, 2, 3, 4],
+                data: vec![0, 1, 2, 3, 4],
             },
-        }.write(&mut strata).unwrap();
-        println!("{}", hex::encode(strata.clone().into_inner()));
+        };
 
-        strata.seek(SeekFrom::Start(0));
-        let grain = ChecksumWrapper::<Grain>::read(&mut strata);
-        println!("{:?}", grain);
+        let mut strata = Cursor::new(Vec::new());
+        data.write(&mut strata).unwrap();
+        strata.seek(SeekFrom::Start(0)).unwrap();
+        let grain = ChecksumWrapper::<Grain>::read(&mut strata).unwrap();
 
-        assert!(false);
+        assert_eq!(data, grain);
     }
 }
