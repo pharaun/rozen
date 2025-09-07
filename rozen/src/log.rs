@@ -1,14 +1,24 @@
 use serde::Deserialize;
 use serde::Serialize;
-use std::io::{Read, Write};
+use std::io::Cursor;
 
 use crate::rcore::hash;
+use crate::rcore::hash::from_hex;
 use crate::rcore::key;
 
 use integer_encoding::VarIntReader;
 use integer_encoding::VarIntWriter;
-use binrw::binrw;
-use binrw::binwrite;
+
+use binrw::{
+    BinRead, BinWrite,
+    BinResult,
+    Endian,
+    binrw, binwrite,
+};
+use binrw::io::{Read, Seek, Write};
+use binrw::meta::{
+    EndianKind, WriteEndian,
+};
 
 // TODO: AWS and disk stuff
 // Look into how to make sure how to commit whole grain bits or none, ie
@@ -27,87 +37,73 @@ pub struct StrataHeader {
     // TODO: add bits for encryption & compression settings
 }
 
+#[derive(Debug)]
+pub struct ChecksumWrapper {
+    inner: Grain,
+}
+
+//    #[br(temp, assert(checksum == s.finalize(), "bad checksum: {:#x?} != {:#x?}", checksum, s.finalize()))]
+//impl BinRead for ChecksumWrapper {
+//    type Args<'a> = ();
+//
+//    fn read_options<R: Read + Seek>(
+//        reader: &mut R,
+//        endian: Endian,
+//        args: Self::Args<'_>,
+//    ) -> BinResult<Self> {
+//        let key = from_hex("38236e791c18434a1fad1dd6f96c4ce0d58bb69ca04d80d8e1325d7cb20476be").unwrap();
+//        Ok(Self {
+//            inner: Grain {
+//                grain_id: 1,
+//                key: key,
+//                part: 1,
+//            }
+//        })
+//    }
+//}
+
+impl BinWrite for ChecksumWrapper {
+    type Args<'a> = ();
+
+    fn write_options<W: Write + Seek>(
+        &self,
+        writer: &mut W,
+        endian: Endian,
+        args: Self::Args<'_>,
+    ) -> BinResult<()> {
+        let data: Vec<u8> = {
+            let mut cursor = Cursor::new(Vec::new());
+            self.inner.write_options(&mut cursor, endian, args)?;
+            cursor.into_inner()
+        };
+        let checksum: u32 = {
+            let mut checksum = hash::Checksum::new();
+            checksum.update(&data);
+            checksum.finalize()
+        };
+
+        data.write_options(writer, endian, args)?;
+        checksum.write_options(writer, endian, args)?;
+
+        Ok(())
+    }
+}
+
+impl WriteEndian for ChecksumWrapper {
+    const ENDIAN: EndianKind = EndianKind::Endian(Endian::Little);
+}
+
+
+
 #[binrw]
-#[brw(little, stream = s, map_stream = TestSum::<_>::new)]
+#[brw(little)]
 #[derive(Debug)]
 pub struct Grain {
     pub grain_id: u32,
     pub key: hash::Hash,
     pub part: u32,
     //pub data: Vec<u8>,
-
-    // TODO: I think what I need is a wrapper type that takes the whole grain, checksums it, or
-    // check the checksum and cache/parse it concurrently since this case isn't going to work
-    // without some weirdness
-    //
-    // see: https://github.com/jam1garner/binrw/discussions/237
-
-    // TODO: need to figure out how to get the checksum code to skip the last "4 bytes" in the
-    // checksum calculation....
-    #[br(temp, assert(checksum == s.finalize(), "bad checksum: {:#x?} != {:#x?}", checksum, s.finalize()))]
-    #[bw(calc(s.finalize()))]
-    checksum: u32,
 }
-
-struct TestSum<S> {
-    inner: S,
-    checksum: hash::Checksum,
-    position: u64,
-}
-
-impl<S: binrw::io::Seek> TestSum<S> {
-    pub fn new(inner: S) -> Self {
-        Self {
-            inner,
-            checksum: hash::Checksum::new(),
-            position: 0,
-        }
-    }
-
-    pub fn finalize(&self) -> u32 {
-        self.checksum.finalize()
-    }
-}
-
-impl<S: binrw::io::Seek> binrw::io::Seek for TestSum<S> {
-    fn seek(&mut self, pos: binrw::io::SeekFrom) -> binrw::io::Result<u64> {
-        let new_position = self.inner.seek(pos)?;
-        Ok(new_position)
-    }
-}
-
-impl<S: binrw::io::Write> binrw::io::Write for TestSum<S> {
-    fn write(&mut self, buf: &[u8]) -> binrw::io::Result<usize> {
-        self.checksum.update(buf);
-        self.inner.write(buf)
-    }
-
-    fn flush(&mut self) -> binrw::io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-impl<S: binrw::io::Read + binrw::io::Seek> binrw::io::Read for TestSum<S> {
-    fn read(&mut self, buf: &mut [u8]) -> binrw::io::Result<usize> {
-        let position = self.inner.stream_position()?;
-        let size = self.inner.read(buf)?;
-
-        println!("read - {:#x?} - {:?}", buf, position);
-        // TODO: checksum is probs ingesting itself into the checksum process
-
-        // Make sure that read bytes aren't checksummed more than once.
-        if position != 40 {
-            for (i, byte) in buf[..size].iter().enumerate() {
-                if position + i as u64 >= self.position {
-                    self.checksum.update(&[*byte]);
-                }
-            }
-        }
-        self.position = position + size as u64;
-        Ok(size)
-    }
-}
-
 
 
 
@@ -137,6 +133,7 @@ pub struct Strata {
 #[cfg(test)]
 mod serialize {
     use super::StrataHeader;
+    use super::ChecksumWrapper;
     use super::Grain;
 
     use std::io::Cursor;
@@ -186,17 +183,19 @@ mod serialize {
         println!("{}", hex::encode(manual.into_inner()));
 
         let mut strata = Cursor::new(Vec::new());
-        Grain {
-            grain_id: 1,
-            key: key,
-            part: 1,
-            //data: vec![0, 1, 2, 3, 4],
+        ChecksumWrapper {
+            inner: Grain {
+                grain_id: 1,
+                key: key,
+                part: 1,
+                //data: vec![0, 1, 2, 3, 4],
+            },
         }.write(&mut strata).unwrap();
         println!("{}", hex::encode(strata.clone().into_inner()));
 
-        strata.seek(SeekFrom::Start(0));
-        let grain = Grain::read(&mut strata);
-        println!("{:?}", grain);
+    //    strata.seek(SeekFrom::Start(0));
+    //    let grain = ChecksumWrapper::read(&mut strata);
+    //    println!("{:?}", grain);
 
         assert!(false);
     }
