@@ -66,51 +66,37 @@ Can later on look at 'packed data block' or something if we need to for effiency
 Naming:
     basin - collection of strata
     strata - stripe (linear collection of grain)
-    clasts - (Linear collection of grain)
-    grain - record (key/data/etc)
+    grain - record (key/data/etc) (key + part)
 
-grain format
-    [strata header]
-        [Version]
-        [key material]
-    [strata header]
-        [grain-start]
-            [XxHash32]
-            [Length] - length of the grain not including the hash
-            [Key]
-                - [content-blake3 hash]
-                    [Single-grain sized record]
-                - [content-blake3 + '-' + part-number -> blake3 hash]
-                    [Multi-grain sized record]
-            [Data]
-                [Encrypted and compressed blobs of data]
-        [grain-end]
-    [strata footer]
-        [pointer to grain that contains the grain-index]
-
-metadata format - data (within the [Data] segment of a grain)
-    [grain-index]
-        [key] -> [offset in the strata to the grain]
-        ....
-
-    [clasts]
-        [content-blake3 hash]
-            [content-blake3 + '-' + part-number -> blake3 hash]
-            ...
-
-    [snapshot]
-        [directory metadata]
-        [file metadata]
-        [snapshot metadata]
+Strata format
+    [Strata Header]
+        [Strata Magic]
+        [Version] - 8 bit
+        [Basin ID] - 8 bit to know which basin this Strata belongs to
+        [Strata ID] - 16/24bit Strata Id (Figure out how big the smallest grain is and how big the file would be)
+        [Header Options]
+            [Encryption Key material]
+            [Compression material]
+    [Grain]
+        [Grain ID] - 32bit Grain Id
+        [Length] - length of the grain
+        [XxHash32]
+        [Key]
+            - [content-blake3 hash]
+            - [part]
+                - Integer
+                - 0 for first part -> some 8bit/16/32bit limit of parts
+        [Data]
+            [Encrypted and compressed blobs of data]
+    [Strata Footer]
+        [blake3 hash of the whole Strata file]
+        [Signature of the file for integrity?]
 
 
-I give up right now here's a list of bookmarks:
- https://docs.rs/persy/1.6.0/persy/
- https://github.com/khonsulabs/nebari?tab=readme-ov-file
- https://github.com/surrealdb/surrealkv
- https://slatedb.io/docs/introduction/
- https://docs.rs/object_store/latest/object_store/
- https://github.com/fjall-rs/fjall
- https://www.tunglevo.com/note/build-a-blazingly-fast-key-value-store-with-rust/
- https://bonsaidb.io/blog/optimizing-bonsaidb-p2/
- https://github.com/khonsulabs/sediment/tree/main/src
+Index Format - TBD
+    [Sorted list of Basin]
+        [Basin-ID]
+        [Sorted list of Strata]
+            [Strata-ID]
+            [Sorted key+part table]
+                [Key][Part] -> [Grain-ID][Offset to Grain + Length]

@@ -12,6 +12,8 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 
+use binrw::binrw;
+
 use crate::rcore::key;
 
 // Make the checksum api be similiar to blake3's
@@ -29,14 +31,18 @@ impl Checksum {
         self.0.write(data);
     }
 
-    pub fn finalize(self) -> u32 {
+    pub fn finalize(&self) -> u32 {
         self.0.finish() as u32
     }
 }
 
 // TODO: improve the blake hash wrap
+#[binrw]
+#[br(map = |x: [u8; 32]| x.into())]
+#[bw(map = Self::as_bytes)]
 #[derive(PartialEq, Eq, Clone, Debug, StdHash)]
 pub struct Hash(blake3::Hash);
+
 
 // TODO: Should require a 'hash type' here so that we can know
 // the providence of the hash (file, blob, etc...)

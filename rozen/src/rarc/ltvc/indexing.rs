@@ -194,7 +194,7 @@ mod serialize {
 
         println!("{}", hex::encode(&index));
 
-        assert!(false);
+        //assert!(false);
     }
 
     #[test]
@@ -207,6 +207,6 @@ mod serialize {
 
         println!("{}", hex::encode(index.into_inner()));
 
-        assert!(false);
+        //assert!(false);
     }
 }
