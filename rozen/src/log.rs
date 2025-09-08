@@ -1,20 +1,15 @@
 use std::io::Cursor;
+use std::io::Error;
 
 use crate::rcore::hash;
+use crate::rcore::hash::from_hex;
 
 //use integer_encoding::VarIntReader;
 //use integer_encoding::VarIntWriter;
 
-use binrw::{
-    BinRead, BinWrite,
-    BinResult,
-    Endian,
-    binrw,
-};
-use binrw::io::{Read, Seek, Write, SeekFrom};
-use binrw::meta::{
-    EndianKind, WriteEndian, ReadEndian,
-};
+use binrw::io::{Read, Seek, SeekFrom, Write};
+use binrw::meta::{EndianKind, ReadEndian, WriteEndian};
+use binrw::{binrw, BinRead, BinResult, BinWrite, Endian};
 
 // TODO: AWS and disk stuff
 // Look into how to make sure how to commit whole grain bits or none, ie
@@ -40,7 +35,7 @@ pub struct ChecksumWrapper<T> {
 
 impl<T> BinRead for ChecksumWrapper<T>
 where
-    T: for <'a> BinRead<Args<'a> = ()>
+    T: for<'a> BinRead<Args<'a> = ()>,
 {
     type Args<'a> = T::Args<'a>;
 
@@ -55,7 +50,7 @@ where
 
         let computed_checksum = {
             let _ = reader.seek(SeekFrom::Start(start));
-            let mut raw_data: Vec<u8> = vec![0; (end-start) as usize];
+            let mut raw_data: Vec<u8> = vec![0; (end - start) as usize];
             reader.read_exact(&mut raw_data[..])?;
 
             let mut checksum = hash::Checksum::new();
@@ -66,13 +61,17 @@ where
 
         // Validate the checksum
         if computed_checksum == parsed_checksum {
-            Ok(ChecksumWrapper {
-                inner: parsed_data,
-            })
+            Ok(ChecksumWrapper { inner: parsed_data })
         } else {
             Err(binrw::Error::Custom {
                 pos: end,
-                err: Box::new(format!("Bad Checksum: {:#x?} != {:#x?}", computed_checksum, parsed_checksum).to_string()),
+                err: Box::new(
+                    format!(
+                        "Bad Checksum: {:#x?} != {:#x?}",
+                        computed_checksum, parsed_checksum
+                    )
+                    .to_string(),
+                ),
             })
         }
     }
@@ -84,7 +83,7 @@ impl<T: ReadEndian> ReadEndian for ChecksumWrapper<T> {
 
 impl<T> BinWrite for ChecksumWrapper<T>
 where
-    T: for <'a> BinWrite<Args<'a> = ()>
+    T: for<'a> BinWrite<Args<'a> = ()>,
 {
     type Args<'a> = T::Args<'a>;
 
@@ -116,8 +115,6 @@ impl<T: WriteEndian> WriteEndian for ChecksumWrapper<T> {
     const ENDIAN: EndianKind = <T as WriteEndian>::ENDIAN;
 }
 
-
-
 #[binrw]
 #[brw(little)]
 #[derive(Debug, PartialEq)]
@@ -138,7 +135,6 @@ pub struct Grain {
     pub data: Vec<u8>,
 }
 
-
 #[binrw]
 #[brw(little)]
 #[derive(Debug)]
@@ -148,7 +144,7 @@ pub struct StrataFooter {
 }
 
 pub struct StrataIndexEntity {
-    pub key: [u8;40],
+    pub key: hash::Hash,
     pub part: u32,
     pub grain_id: u32,
     pub offset: u32,
@@ -156,23 +152,96 @@ pub struct StrataIndexEntity {
 }
 
 // Handles the bookkeeping for writing a Strata out
-pub struct Strata {
+pub struct StrataWriter<W: Write> {
+    inner: W,
+    inner_pos: usize,
+    index: Vec<StrataIndexEntity>,
 
+    // TODO: add a live hasher for the footer
 }
+
+impl<W: Write> StrataWriter<W> {
+    pub fn new(writer: W) -> Self {
+        StrataWriter {
+            inner: writer,
+            inner_pos: 0,
+            index: Vec::new(),
+        }
+    }
+
+    pub fn into_inner(self) -> W {
+        self.inner
+    }
+
+    fn write_binrw_record<T>(&mut self, record: T) -> Result<usize, Error>
+    where
+        T: for<'a> BinWrite<Args<'a> = ()> + WriteEndian,
+    {
+        let mut cursor = Cursor::new(Vec::new());
+        record.write(&mut cursor).unwrap();
+        let size = self.inner.write(&cursor.into_inner())?;
+        self.inner_pos += size;
+        Ok(size)
+    }
+
+    pub fn write_header(&mut self, basin_id: u8, strata_id: u16) -> Result<usize, Error> {
+        let header = ChecksumWrapper {
+            inner: StrataHeader {
+                version: 1,
+                basin_id,
+                strata_id,
+            },
+        };
+
+        self.write_binrw_record(header)
+    }
+
+    pub fn write_footer(&mut self) -> Result<usize, Error> {
+        let footer = StrataFooter {
+            hash: from_hex("38236e791c18434a1fad1dd6f96c4ce0d58bb69ca04d80d8e1325d7cb20476be").unwrap(),
+        };
+
+        self.write_binrw_record(footer)
+    }
+
+    pub fn write_grain(&mut self, key: hash::Hash, part: u32, data: Vec<u8>) -> Result<usize, Error> {
+        let grain = ChecksumWrapper {
+            inner: Grain {
+                grain_id: 1,
+                key: key.clone(),
+                part,
+                data,
+            }
+        };
+        let offset = self.inner_pos;
+        let length = self.write_binrw_record(grain)?;
+
+        self.index.push(StrataIndexEntity {
+            key,
+            part,
+            grain_id: 1,
+            offset: offset as u32,
+            length: length as u32,
+        });
+        Ok(length)
+    }
+}
+
+
 
 
 #[cfg(test)]
 mod serialize {
-    use super::StrataHeader;
     use super::ChecksumWrapper;
     use super::Grain;
+    use super::StrataHeader;
 
     use std::io::Cursor;
     use std::io::Seek;
     use std::io::SeekFrom;
 
-    use binrw::BinWrite;
     use binrw::BinRead;
+    use binrw::BinWrite;
 
     use crate::rcore::key::MemKey;
 
@@ -183,7 +252,7 @@ mod serialize {
                 version: 1,
                 basin_id: 1,
                 strata_id: 1,
-            }
+            },
         };
 
         let mut strata = Cursor::new(Vec::new());
