@@ -1,18 +1,18 @@
 use serde::Deserialize;
 use serde::Serialize;
-use std::io::{Read, Write};
+use std::io::{Read, Write, Cursor};
 use zstd::stream::read::Encoder;
+
+use integer_encoding::VarIntReader;
+use integer_encoding::VarIntWriter;
+use binrw::binrw;
+use binrw::BinWrite;
 
 use crate::rcore::crypto;
 use crate::rcore::hash;
 use crate::rcore::key;
 
 use crate::rarc::ltvc::builder::LtvcBuilder;
-
-// Test imports
-use integer_encoding::VarIntReader;
-use integer_encoding::VarIntWriter;
-use binrw::binrw;
 
 // TODO: add header type, for initial impl this is Fidx only
 #[binrw]
@@ -119,9 +119,12 @@ impl<W: Write> LtvcIndexing<W> {
 
             self.idx += self.inner.write_aidx().unwrap();
 
-            let config = bincode::config::standard().with_little_endian().with_variable_int_encoding();
-            let index = bincode::serde::encode_to_vec(&self.h_idx, config).unwrap();
-            let comp = Encoder::new(&index[..], 21).unwrap();
+            // Write length of the h_idx then the h_idx
+            let mut index = Cursor::new(Vec::new());
+            (self.h_idx.len() as u32).write_le(&mut index).unwrap();
+            &self.h_idx.write(&mut index).unwrap();
+
+            let comp = Encoder::new(&mut index, 21).unwrap();
             let mut enc = crypto::encrypt(key, comp).unwrap();
 
             self.idx += self.inner.write_edat(&mut enc).unwrap();
@@ -182,19 +185,6 @@ mod serialize {
             snapshot_gen(123, 0),
             pack_idx_gen(100, 1),
         ]
-    }
-
-    #[test]
-    fn small_data_bincode() {
-        let idx = data_gen();
-
-        // Test encode options
-        let config = bincode::config::standard().with_little_endian().with_variable_int_encoding();
-        let index = bincode::serde::encode_to_vec(&idx, config).unwrap();
-
-        println!("{}", hex::encode(&index));
-
-        //assert!(false);
     }
 
     #[test]

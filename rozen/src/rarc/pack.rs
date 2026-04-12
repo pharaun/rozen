@@ -1,7 +1,8 @@
 use log::debug;
 use std::collections::HashMap;
-use std::io::{copy, Read, Write};
+use std::io::{copy, Read, Write, Cursor};
 use zstd::stream::read::Decoder;
+use binrw::BinRead;
 
 use crate::rcore::crypto;
 use crate::rcore::hash;
@@ -79,9 +80,14 @@ impl PackOut {
                     let mut und = Decoder::new(&mut dec).unwrap();
                     copy(&mut und, &mut idx_buf).unwrap();
 
-                    // Deserialize the index
-                    let config = bincode::config::standard().with_little_endian().with_variable_int_encoding();
-                    chunk_idx = bincode::serde::decode_from_slice(&idx_buf, config).unwrap().0;
+                    // Read the length of index then deserialize members
+                    let mut index = Cursor::new(&idx_buf);
+                    let len: u32 = u32::read_le(&mut index).unwrap();
+                    chunk_idx = Vec::<HeaderIdx>::read_args(
+                        &mut index,
+                        binrw::VecArgs{ count: len as usize, inner: ()},
+                    ).unwrap();
+
                     debug!("AIDX - EDAT - length: {}", chunk_idx.len());
                 }
 
