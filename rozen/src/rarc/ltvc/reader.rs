@@ -165,11 +165,11 @@ impl<R: Read> Iterator for LtvcReader<R> {
 #[cfg(test)]
 mod test_ltvc_iterator {
     use super::*;
+    use crate::rarc::ltvc::CHUNK_SIZE;
+    use crate::rarc::ltvc::builder::LtvcBuilder;
     use crate::rcore::hash;
     use crate::rcore::key;
-    use crate::rarc::ltvc::builder::LtvcBuilder;
-    use crate::rarc::ltvc::CHUNK_SIZE;
-    use std::io::{copy, Cursor, Seek, SeekFrom};
+    use std::io::{Cursor, Seek, SeekFrom, copy};
 
     fn test_hash() -> hash::Hash {
         let id = key::MemKey::new();

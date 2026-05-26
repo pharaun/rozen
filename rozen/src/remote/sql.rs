@@ -178,9 +178,9 @@ fn write_filename<R: Read>(
 
 #[cfg(test)]
 mod tests {
-    use crate::remote::sql::SqlVFS;
     use crate::remote::Remote;
     use crate::remote::Typ;
+    use crate::remote::sql::SqlVFS;
     use std::io::Cursor;
 
     #[test]

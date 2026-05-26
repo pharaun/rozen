@@ -5,8 +5,8 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use clap::Parser;
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 use log::info;
 

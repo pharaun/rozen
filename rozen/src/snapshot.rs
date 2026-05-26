@@ -1,12 +1,12 @@
-use std::io::{copy, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write, copy};
 use std::path::Path;
 use zstd::stream::read::Decoder;
 use zstd::stream::read::Encoder;
 
 use log::{debug, info, warn};
 use std::collections::HashMap;
-use std::fs::create_dir_all;
 use std::fs::File;
+use std::fs::create_dir_all;
 
 use crate::rcore::crypto;
 use crate::rcore::hash;
@@ -20,9 +20,9 @@ use crate::remote::Typ;
 use crate::cas::ObjectFetch;
 use crate::cas::ObjectStore;
 
-use crate::sql::walk_files;
 use crate::sql::Index;
 use crate::sql::Map;
+use crate::sql::walk_files;
 
 // TODO: can probs make the snapshot be strictly focused on snapshot concerns such as
 // - deciding what files needs to be stored in a snapshot

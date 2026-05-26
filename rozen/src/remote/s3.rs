@@ -1,10 +1,10 @@
-use aws_sdk_s3::types::CompletedPart;
-use aws_sdk_s3::types::CompletedMultipartUpload;
-use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client;
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::CompletedMultipartUpload;
+use aws_sdk_s3::types::CompletedPart;
 use bytes::Buf;
 use std::error::Error;
-use std::io::{copy, Read, Write};
+use std::io::{Read, Write, copy};
 use std::mem;
 use tokio::runtime::Runtime;
 

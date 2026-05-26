@@ -1,0 +1,39 @@
+[package]
+name = "rozen-bin"
+version = "0.1.0"
+authors = ["Anja Berens <pharaun666@gmail.com>"]
+edition = "2024"
+
+[lints]
+workspace = true
+
+[features]
+default = ["sql"]
+s3 = ["rozen/s3"]
+sql = ["rozen/sql"]
+
+[dependencies]
+# Rozen
+rozen = { path = "../rozen" }
+
+# FS Walker
+ignore = "0.4"
+
+# File Index
+tempfile = "3"
+
+# Time library
+time = { version = "0.3", features = ["formatting"] }
+
+# Configuration
+toml = "1.1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+
+# Logger
+log = "0.4"
+env_logger = "0.11"

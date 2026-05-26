@@ -2,7 +2,7 @@ use std::io::Read;
 
 use thiserror::Error;
 
-use sodiumoxide::crypto::secretstream::{Header, Pull, Push, Stream, Tag, ABYTES};
+use sodiumoxide::crypto::secretstream::{ABYTES, Header, Pull, Push, Stream, Tag};
 
 use crate::rcore::buf::fill_buf;
 use crate::rcore::buf::flush_buf;
@@ -194,7 +194,7 @@ fn crypt_read<R: Read, E: Engine>(
 #[cfg(test)]
 mod test_encrypt_decrypt_roundtrip {
     use super::*;
-    use std::io::{copy, Cursor, Write};
+    use std::io::{Cursor, Write, copy};
 
     #[test]
     fn small_data_roundtrip() {

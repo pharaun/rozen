@@ -9,7 +9,7 @@ use crate::rcore::hash::from_hex;
 
 use binrw::io::{Read, Seek, SeekFrom, Write};
 use binrw::meta::{EndianKind, ReadEndian, WriteEndian};
-use binrw::{binrw, BinRead, BinResult, BinWrite, Endian};
+use binrw::{BinRead, BinResult, BinWrite, Endian, binrw};
 
 // TODO: AWS and disk stuff
 // Look into how to make sure how to commit whole grain bits or none, ie
@@ -156,7 +156,6 @@ pub struct StrataWriter<W: Write> {
     inner: W,
     inner_pos: usize,
     index: Vec<StrataIndexEntity>,
-
     // TODO: add a live hasher for the footer
 }
 
@@ -198,20 +197,26 @@ impl<W: Write> StrataWriter<W> {
 
     pub fn write_footer(&mut self) -> Result<usize, Error> {
         let footer = StrataFooter {
-            hash: from_hex("38236e791c18434a1fad1dd6f96c4ce0d58bb69ca04d80d8e1325d7cb20476be").unwrap(),
+            hash: from_hex("38236e791c18434a1fad1dd6f96c4ce0d58bb69ca04d80d8e1325d7cb20476be")
+                .unwrap(),
         };
 
         self.write_binrw_record(footer)
     }
 
-    pub fn write_grain(&mut self, key: hash::Hash, part: u32, data: Vec<u8>) -> Result<usize, Error> {
+    pub fn write_grain(
+        &mut self,
+        key: hash::Hash,
+        part: u32,
+        data: Vec<u8>,
+    ) -> Result<usize, Error> {
         let grain = ChecksumWrapper {
             inner: Grain {
                 grain_id: 1,
                 key: key.clone(),
                 part,
                 data,
-            }
+            },
         };
         let offset = self.inner_pos;
         let length = self.write_binrw_record(grain)?;
@@ -226,9 +231,6 @@ impl<W: Write> StrataWriter<W> {
         Ok(length)
     }
 }
-
-
-
 
 #[cfg(test)]
 mod serialize {

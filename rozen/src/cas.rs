@@ -15,7 +15,6 @@ use crate::remote::Typ;
 
 use crate::sql::Map;
 
-
 // This manages the under laying layer
 // - chunking
 // - packfiles

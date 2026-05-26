@@ -1,12 +1,12 @@
 use serde::Deserialize;
 use serde::Serialize;
-use std::io::{Read, Write, Cursor};
+use std::io::{Cursor, Read, Write};
 use zstd::stream::read::Encoder;
 
+use binrw::BinWrite;
+use binrw::binrw;
 use integer_encoding::VarIntReader;
 use integer_encoding::VarIntWriter;
-use binrw::binrw;
-use binrw::BinWrite;
 
 use crate::rcore::crypto;
 use crate::rcore::hash;
@@ -142,8 +142,8 @@ impl<W: Write> LtvcIndexing<W> {
 mod serialize {
     use super::HeaderIdx;
 
-    use std::io::Cursor;
     use binrw::BinWrite;
+    use std::io::Cursor;
 
     use crate::rcore::key::MemKey;
 

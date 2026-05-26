@@ -1,0 +1,13 @@
+[package]
+name = "rozen-tui"
+version = "0.1.0"
+authors = ["Anja Berens <pharaun666@gmail.com>"]
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+crossterm = "0.29.0"
+rand = "0.10.1"
+ratatui = "0.30.0"

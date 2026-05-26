@@ -1,16 +1,16 @@
 use std::convert::TryInto;
 use std::fmt;
-use std::io::{copy, Read};
+use std::io::{Read, copy};
 
 use std::hash::Hash as StdHash;
 use std::hash::Hasher as StdHasher;
 use twox_hash::XxHash32;
 
-use serde::de::{self, Unexpected, Visitor};
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
+use serde::de::{self, Unexpected, Visitor};
 
 use binrw::binrw;
 
@@ -42,7 +42,6 @@ impl Checksum {
 #[bw(map = Self::as_bytes)]
 #[derive(PartialEq, Eq, Clone, Debug, StdHash)]
 pub struct Hash(blake3::Hash);
-
 
 // TODO: Should require a 'hash type' here so that we can know
 // the providence of the hash (file, blob, etc...)

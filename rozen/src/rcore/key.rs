@@ -4,7 +4,7 @@ use sodiumoxide::crypto::secretstream;
 
 use std::fmt;
 
-use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
