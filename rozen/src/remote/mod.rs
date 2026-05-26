@@ -24,10 +24,10 @@ pub enum Typ {
 impl fmt::Display for Typ {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Typ::Map => write!(f, "map"),
-            Typ::Index => write!(f, "index"),
-            Typ::Pack => write!(f, "pack"),
-            Typ::TEST => write!(f, "TEST"),
+            Self::Map => write!(f, "map"),
+            Self::Index => write!(f, "index"),
+            Self::Pack => write!(f, "pack"),
+            Self::TEST => write!(f, "TEST"),
         }
     }
 }

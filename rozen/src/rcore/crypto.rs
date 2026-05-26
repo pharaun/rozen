@@ -32,7 +32,7 @@ pub enum CryptoError {
 type CResult<T> = Result<T, CryptoError>;
 
 pub fn init() -> CResult<()> {
-    sodiumoxide::init().map_err(|_| CryptoError::Init)
+    sodiumoxide::init().map_err(|()| CryptoError::Init)
 }
 
 pub struct Crypter<R, E> {
@@ -58,7 +58,7 @@ pub struct Crypter<R, E> {
 //     - Use the phash (file HMAC) for additional data with the encryption to ensure that
 //     the encrypted data matches the phash
 pub fn encrypt<R: Read>(key: &key::MemKey, reader: R) -> CResult<Crypter<R, EncEngine>> {
-    let (stream, header) = Stream::init_push(&key.enc_key()).map_err(|_| CryptoError::InitPush)?;
+    let (stream, header) = Stream::init_push(&key.enc_key()).map_err(|()| CryptoError::InitPush)?;
     let engine = EncEngine(stream);
 
     // Chunk Frame size + encryption additional bytes (~17 bytes)
@@ -83,7 +83,7 @@ pub fn decrypt<R: Read>(key: &key::MemKey, mut reader: R) -> CResult<Crypter<R, 
     let fheader = Header::from_slice(&dheader).ok_or(CryptoError::HeaderParse)?;
 
     // Decrypter setup
-    let stream = Stream::init_pull(&fheader, &key.enc_key()).map_err(|_| CryptoError::InitPull)?;
+    let stream = Stream::init_pull(&fheader, &key.enc_key()).map_err(|()| CryptoError::InitPull)?;
     let engine = DecEngine(stream);
 
     // Chunk Frame size (input will be frame+abytes)
@@ -107,7 +107,7 @@ impl<R: Read, E: Engine> Read for Crypter<R, E> {
             &mut self.in_buf,
             buf,
         )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .map_err(|e| std::io::Error::other(e))
     }
 }
 
@@ -124,7 +124,7 @@ impl Engine for EncEngine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> CResult<()> {
         self.0
             .push_to_vec(data, None, tag, out)
-            .map_err(|_| CryptoError::EncryptionFailed)
+            .map_err(|()| CryptoError::EncryptionFailed)
     }
 
     fn is_finalized(&self) -> bool {
@@ -136,7 +136,7 @@ impl Engine for DecEngine {
     fn crypt(&mut self, data: &[u8], tag: Tag, out: &mut Vec<u8>) -> CResult<()> {
         self.0
             .pull_to_vec(data, None, out)
-            .map_err(|_| CryptoError::DecryptionFailed)
+            .map_err(|()| CryptoError::DecryptionFailed)
             .and_then(|dtag| {
                 if dtag == tag {
                     Ok(())
@@ -164,10 +164,7 @@ fn crypt_read<R: Read, E: Engine>(
 
     // 1. If buf_write == buf.len() return
     while buf_write < buf.len() {
-        if !out_buf.is_empty() {
-            // 2. If data in out_buf, flush into buf first
-            buf_write += flush_buf(out_buf, &mut buf[buf_write..]);
-        } else {
+        if out_buf.is_empty() {
             // 3. Read till there is 8Kb of data in in_buf
             match fill_buf(data, in_buf)? {
                 // 4a. Nothing left in in_buf, is EoF, and is not finalize, finalize
@@ -186,6 +183,9 @@ fn crypt_read<R: Read, E: Engine>(
                     engine.crypt(&in_buf[..in_len], tag, out_buf)?;
                 }
             }
+        } else {
+            // 2. If data in out_buf, flush into buf first
+            buf_write += flush_buf(out_buf, &mut buf[buf_write..]);
         }
     }
     Ok(buf_write)

@@ -9,7 +9,7 @@ pub fn fill_buf<R: Read>(data: &mut R, buf: &mut [u8]) -> std::io::Result<(bool,
             Ok(0) => return Ok((true, buf_read)),
             Ok(x) => buf_read += x,
             Err(e) => return Err(e),
-        };
+        }
     }
     Ok((false, buf_read))
 }

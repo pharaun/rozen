@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::io::Read;
 
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt as _};
 use thiserror::Error;
 
 use crate::rcore::hash::Checksum;
@@ -9,7 +9,7 @@ use crate::rcore::hash::Checksum;
 use crate::rarc::ltvc::MAX_CHUNK_SIZE;
 
 #[derive(Error, Debug)]
-pub enum LtvcError {
+pub(super) enum LtvcError {
     #[error(transparent)]
     IO(#[from] std::io::Error),
     #[error("permitted max chunk size exceeded")]
@@ -20,13 +20,13 @@ pub enum LtvcError {
     HeaderChecksum,
 }
 
-pub struct LtvcReaderRaw<R: Read> {
+pub(super) struct LtvcReaderRaw<R: Read> {
     inner: R,
 }
 
 // This only returns valid entry, invalid will be an Error string
 #[derive(Debug, PartialEq, Eq)]
-pub struct LtvcEntryRaw {
+pub(super) struct LtvcEntryRaw {
     // TODO: consider the merit of 4 bytes type? with 4 flag value in future
     // versus 1x 8byte type + 8byte flag field.
     // u32, u8, u8, u16 vs u32, u32, u16.
@@ -36,8 +36,8 @@ pub struct LtvcEntryRaw {
 }
 
 impl<R: Read> LtvcReaderRaw<R> {
-    pub fn new(reader: R) -> Self {
-        LtvcReaderRaw { inner: reader }
+    pub(super) fn new(reader: R) -> Self {
+        Self { inner: reader }
     }
 
     fn read_entry(&mut self) -> Result<LtvcEntryRaw, LtvcError> {

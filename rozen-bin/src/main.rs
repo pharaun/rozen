@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use tempfile::TempDir;
 
-use clap::Parser;
+use clap::Parser as _;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -96,7 +96,7 @@ fn main() {
         Some(Commands::Test) => {
             println!("TEST ONLY");
             let timestamp = OffsetDateTime::now_utc();
-            let tag = Some("TEST".to_string());
+            let tag = Some("TEST".to_owned());
             let target = TempDir::new().unwrap();
 
             let mut config_content = remote.write_multi_filename(Typ::TEST, "CONFIG").unwrap();
@@ -141,14 +141,14 @@ fn init(config_content: &mut Box<dyn Write>, password: &str) {
         "#,
     )
     .unwrap();
-    info!("CONFIG: {:?}", sample_config);
+    info!("CONFIG: {sample_config:?}");
 
     // Generate a new MemKey and convert it to DiskKey to store in the config
     let key = key::MemKey::new();
     let disk_key = key.to_disk_key(password);
     sample_config.disk_key = Some(disk_key);
 
-    info!("CONFIG2: {:?}", sample_config);
+    info!("CONFIG2: {sample_config:?}");
     let toml = toml::to_string(&sample_config).unwrap();
 
     // Dump to output stream
@@ -180,9 +180,9 @@ fn append<B: Remote>(
     tag: Option<String>,
 ) {
     // Config bits
-    let target = config.sources.get(0).unwrap().include.get(0).unwrap();
-    let _xclude = config.sources.get(0).unwrap().exclude.get(0).unwrap();
-    let _stype = config.sources.get(0).unwrap().source_type;
+    let target = config.sources.first().unwrap().include.first().unwrap();
+    let _xclude = config.sources.first().unwrap().exclude.first().unwrap();
+    let _stype = config.sources.first().unwrap().source_type;
     let key = config.disk_key.as_ref().unwrap().to_mem_key(password);
 
     // Store indexer + Map
@@ -198,7 +198,7 @@ fn append<B: Remote>(
             .follow_links(config.symlink)
             .standard_filters(false)
             .same_file_system(config.same_fs)
-            .sort_by_file_name(|a, b| a.cmp(b))
+            .sort_by_file_name(Ord::cmp)
             .build(),
     );
 }

@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rand::distr::{Distribution, Uniform};
+use rand::distr::{Distribution as _, Uniform};
 
 use crossterm::event;
 use ratatui::DefaultTerminal;
@@ -12,7 +12,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Gauge, LineGauge, List, ListItem, Paragraph, Widget};
+use ratatui::widgets::{Block, Gauge, LineGauge, List, ListItem, Paragraph, Widget as _};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport, symbols};
 
 struct InlineProgress {
@@ -23,7 +23,7 @@ struct InlineProgress {
 }
 
 impl InlineProgress {
-    fn init(lines: u16, tick_rate: u64) -> InlineProgress {
+    fn init(lines: u16, tick_rate: u64) -> Self {
         let terminal = ratatui::init_with_options(TerminalOptions {
             viewport: Viewport::Inline(lines),
         });
@@ -73,7 +73,7 @@ impl InlineProgress {
     fn run(
         &mut self,
         workers: Vec<Worker>,
-        mut downloads: Downloads,
+        downloads: Downloads,
     ) -> Result<(), Box<dyn Error>> {
         run(&mut self.terminal, workers, downloads, &self.rx)
     }

@@ -1,4 +1,4 @@
-use binrw::BinRead;
+use binrw::BinRead as _;
 use log::debug;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write, copy};
@@ -31,7 +31,7 @@ pub struct PackBuilder<W: Write> {
 //  to higher layer and just index on 'hash + part -> idx + len'
 impl<W: Write> PackBuilder<W> {
     pub fn new(id: hash::Hash, writer: W) -> Self {
-        PackBuilder {
+        Self {
             id,
             inner: LtvcIndexing::new(writer),
         }
@@ -100,7 +100,7 @@ impl PackOut {
             }
         }
 
-        PackOut {
+        Self {
             idx,
             _idx: chunk_idx,
         }

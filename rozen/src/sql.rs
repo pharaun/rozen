@@ -1,7 +1,7 @@
 use rusqlite as rs;
 
 use log::debug;
-use std::io::{Read, Seek, SeekFrom, Write, copy};
+use std::io::{Read, Seek as _, SeekFrom, Write, copy};
 use std::path::Path;
 use zstd::stream::read::Decoder;
 use zstd::stream::read::Encoder;
@@ -48,7 +48,7 @@ impl SqlDb {
     fn new() -> Self {
         let db_tmp = tempfile::NamedTempFile::new().unwrap();
         let conn = Connection::open(db_tmp.path()).unwrap();
-        SqlDb { db_tmp, conn }
+        Self { db_tmp, conn }
     }
 
     fn attach(&self, db: &Path, name: &str) {
@@ -63,7 +63,7 @@ impl SqlDb {
 
     fn detach(&self, name: &str) {
         self.conn
-            .execute_batch(&format!("DETACH DATABASE {};", name))
+            .execute_batch(&format!("DETACH DATABASE {name};"))
             .unwrap();
     }
 
@@ -80,7 +80,7 @@ impl SqlDb {
                     copy(&mut und, &mut db_tmp).unwrap();
 
                     let conn = Connection::open(db_tmp.path()).unwrap();
-                    return SqlDb { db_tmp, conn };
+                    return Self { db_tmp, conn };
                 }
 
                 // Skip header we don't care for
@@ -114,12 +114,12 @@ impl SqlDb {
     }
 }
 
-pub struct Index {
+pub(crate) struct Index {
     db: SqlDb,
 }
 
 impl Index {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let db = SqlDb::new();
 
         db.conn
@@ -132,21 +132,21 @@ impl Index {
             )
             .unwrap();
 
-        Index { db }
+        Self { db }
     }
 
-    pub fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Self {
-        Index {
+    pub(crate) fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Self {
+        Self {
             db: SqlDb::load(index, key),
         }
     }
 
-    pub fn unload<W: Write>(self, key: &key::MemKey, writer: W) {
+    pub(crate) fn unload<W: Write>(self, key: &key::MemKey, writer: W) {
         self.db.unload(UnloadType::Shdr, key, writer);
     }
 
     // TODO: improve the types
-    pub fn insert_file(&self, path: &std::path::Path, hash: &hash::Hash) {
+    pub(crate) fn insert_file(&self, path: &Path, hash: &hash::Hash) {
         let mut file_stmt = self
             .db
             .conn
@@ -168,12 +168,12 @@ impl Index {
     }
 }
 
-pub struct Map {
+pub(crate) struct Map {
     db: SqlDb,
 }
 
 impl Map {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let db = SqlDb::new();
 
         db.conn
@@ -185,21 +185,21 @@ impl Map {
             )
             .unwrap();
 
-        Map { db }
+        Self { db }
     }
 
-    pub fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Self {
-        Map {
+    pub(crate) fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Self {
+        Self {
             db: SqlDb::load(index, key),
         }
     }
 
-    pub fn unload<W: Write>(self, key: &key::MemKey, writer: W) {
+    pub(crate) fn unload<W: Write>(self, key: &key::MemKey, writer: W) {
         self.db.unload(UnloadType::Pidx, key, writer);
     }
 
     // TODO: improve the types
-    pub fn insert_chunk(&self, chunk: &hash::Hash, pack: &hash::Hash) {
+    pub(crate) fn insert_chunk(&self, chunk: &hash::Hash, pack: &hash::Hash) {
         let mut pack_stmt = self
             .db
             .conn
@@ -216,7 +216,7 @@ impl Map {
             .unwrap();
     }
 
-    pub fn find_pack(&self, chunk: &hash::Hash) -> Option<hash::Hash> {
+    pub(crate) fn find_pack(&self, chunk: &hash::Hash) -> Option<hash::Hash> {
         let mut query_stmt = self
             .db
             .conn
@@ -236,7 +236,7 @@ impl Map {
     }
 }
 
-pub fn walk_files<R, F>(index: &mut R, map: &mut R, key: &key::MemKey, mut f: F)
+pub(crate) fn walk_files<R, F>(index: &mut R, map: &mut R, key: &key::MemKey, mut f: F)
 where
     F: FnMut(&str, u32, hash::Hash, hash::Hash),
     R: Read,
@@ -275,7 +275,7 @@ where
                 perm,
                 hash::from_hex(&pack).unwrap(),
                 hash::from_hex(&hash).unwrap(),
-            )
+            );
         }
     }
 

@@ -8,7 +8,7 @@ use std::fmt;
 #[cfg(test)]
 use std::fmt::Debug;
 
-use byteorder::{ByteOrder, LittleEndian};
+use byteorder::{ByteOrder as _, LittleEndian};
 
 // Single threaded but we are on one thread here for now
 use std::cell::RefCell;
@@ -20,14 +20,14 @@ use crate::rcore::hash::Hash;
 use crate::rarc::ltvc::raw::LtvcError;
 use crate::rarc::ltvc::raw::LtvcReaderRaw;
 
-pub struct LtvcReader<R: Read> {
+pub(super) struct LtvcReader<R: Read> {
     inner: Rc<RefCell<Peekable<LtvcReaderRaw<R>>>>,
 }
 
 // TODO: may still be better to return the EdatReader so you can invoke .skip()
 // to force the stream to skip to the next non-edat chunk
 #[cfg_attr(test, derive(Debug, PartialEq))]
-pub enum LtvcEntry<R: Read> {
+pub(super) enum LtvcEntry<R: Read> {
     Ahdr { version: u8 },
     Fhdr { hash: Hash },
     Shdr,
@@ -89,8 +89,8 @@ impl<R: Read> Read for EdatReader<R> {
 }
 
 impl<R: Read> LtvcReader<R> {
-    pub fn new(reader: R) -> Self {
-        LtvcReader {
+    pub(super) fn new(reader: R) -> Self {
+        Self {
             inner: Rc::new(RefCell::new(LtvcReaderRaw::new(reader).peekable())),
         }
     }
@@ -108,9 +108,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                 match &entry.typ {
                     b"AHDR" => {
                         // data should be 1 byte long, the version
-                        if entry.data.len() != 1 {
-                            panic!("AHDR isn't only version");
-                        }
+                        assert!(entry.data.len() == 1, "AHDR isn't only version");
                         Some(Ok(LtvcEntry::Ahdr {
                             version: entry.data[0],
                         }))
@@ -119,9 +117,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         let len = entry.data.len();
 
                         // Should be 32 bytes for hash
-                        if len != 32 {
-                            panic!("FHDR malformed HASH length");
-                        }
+                        assert!(len == 32, "FHDR malformed HASH length");
                         let hash: [u8; 32] = entry.data[..len].try_into().unwrap();
 
                         // Setup a EDAT reader
@@ -148,9 +144,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         }))
                     }
                     b"AEND" => {
-                        if entry.data.len() != 4 {
-                            panic!("AEND isn't only version");
-                        }
+                        assert!(entry.data.len() == 4, "AEND isn't only version");
                         Some(Ok(LtvcEntry::Aend {
                             idx: LittleEndian::read_u32(&entry.data) as usize,
                         }))

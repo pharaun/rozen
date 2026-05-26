@@ -58,7 +58,7 @@ pub struct MemKey {
 impl MemKey {
     // TODO: Generate per session keys for now
     pub fn new() -> Self {
-        MemKey {
+        Self {
             enc: secretstream::gen_key(),
             hmac: secretstream::gen_key(),
         }

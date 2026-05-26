@@ -116,7 +116,7 @@
 //!
 //! | Type | Name    | Description |
 //! | ---: | ------- | ----------- |
-//! | u32  | idx_ptr | The offset (from start of the archive block) pointer to the `AIDX` |
+//! | u32  | `idx_ptr` | The offset (from start of the archive block) pointer to the `AIDX` |
 //!
 //! The standard strategy for doing a seek in an archive block which contains a `AIDX` is to
 //! fetch the last 16 bytes (4 byte length, 4 byte type, 4 byte offset, 4 byte checksum). Once
@@ -135,8 +135,8 @@ mod reader;
 // 1Kb EDAT frame buffer
 // TODO: to force ourself to handle sequence of EDAT for now use small
 // chunk size such as 1024
-#[allow(clippy::identity_op)]
+#[expect(clippy::identity_op)]
 const CHUNK_SIZE: usize = 1 * 1024;
 
-#[allow(clippy::identity_op)]
+#[expect(clippy::identity_op)]
 const MAX_CHUNK_SIZE: usize = 10 * 1024;

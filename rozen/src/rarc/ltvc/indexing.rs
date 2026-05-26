@@ -3,10 +3,10 @@ use serde::Serialize;
 use std::io::{Cursor, Read, Write};
 use zstd::stream::read::Encoder;
 
-use binrw::BinWrite;
+use binrw::BinWrite as _;
 use binrw::binrw;
-use integer_encoding::VarIntReader;
-use integer_encoding::VarIntWriter;
+use integer_encoding::VarIntReader as _;
+use integer_encoding::VarIntWriter as _;
 
 use crate::rcore::crypto;
 use crate::rcore::hash;
@@ -21,7 +21,7 @@ use crate::rarc::ltvc::builder::LtvcBuilder;
 pub struct HeaderIdx {
     pub typ: [u8; 4],
 
-    #[bw(map = |x| x.as_bytes())]
+    #[bw(map = crate::rcore::hash::Hash::as_bytes)]
     #[br(map = |x: [u8; 32]| x.into())]
     pub hash: hash::Hash,
 
@@ -56,7 +56,7 @@ pub struct LtvcIndexing<W: Write> {
 // This is the high level writer interface
 impl<W: Write> LtvcIndexing<W> {
     pub fn new(writer: W) -> Self {
-        let mut indexer = LtvcIndexing {
+        let mut indexer = Self {
             inner: LtvcBuilder::new(writer),
             h_idx: Vec::new(),
             idx: 0,
@@ -122,7 +122,7 @@ impl<W: Write> LtvcIndexing<W> {
             // Write length of the h_idx then the h_idx
             let mut index = Cursor::new(Vec::new());
             (self.h_idx.len() as u32).write_le(&mut index).unwrap();
-            &self.h_idx.write(&mut index).unwrap();
+            self.h_idx.write(&mut index).unwrap();
 
             let comp = Encoder::new(&mut index, 21).unwrap();
             let mut enc = crypto::encrypt(key, comp).unwrap();

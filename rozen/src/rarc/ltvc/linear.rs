@@ -37,7 +37,7 @@ pub struct LtvcLinear<R: Read> {
 
 impl<R: Read> LtvcLinear<R> {
     pub fn new(reader: R) -> Self {
-        LtvcLinear {
+        Self {
             inner: LtvcReader::new(reader),
             state: Spo::Start,
         }
@@ -59,23 +59,22 @@ impl<R: Read> Iterator for LtvcLinear<R> {
 
                 // Assert that the Header state follows Ahdr or Edat, where
                 // header state is: Fhdr/Aidx/Shdr/Pidx
-                (Spo::Ahdr, Some(Ok(LtvcEntry::Fhdr { hash })))
-                | (Spo::Edat, Some(Ok(LtvcEntry::Fhdr { hash }))) => {
-                    debug!("FHDR <{:?}>", hash);
+                (Spo::Ahdr | Spo::Edat, Some(Ok(LtvcEntry::Fhdr { hash }))) => {
+                    debug!("FHDR <{hash:?}>");
                     self.state = Spo::Header(Header::Fhdr { hash });
                 }
 
-                (Spo::Ahdr, Some(Ok(LtvcEntry::Aidx))) | (Spo::Edat, Some(Ok(LtvcEntry::Aidx))) => {
+                (Spo::Ahdr | Spo::Edat, Some(Ok(LtvcEntry::Aidx))) => {
                     debug!("AIDX");
                     self.state = Spo::Header(Header::Aidx);
                 }
 
-                (Spo::Ahdr, Some(Ok(LtvcEntry::Shdr))) | (Spo::Edat, Some(Ok(LtvcEntry::Shdr))) => {
+                (Spo::Ahdr | Spo::Edat, Some(Ok(LtvcEntry::Shdr))) => {
                     debug!("SHDR");
                     self.state = Spo::Header(Header::Shdr);
                 }
 
-                (Spo::Ahdr, Some(Ok(LtvcEntry::Pidx))) | (Spo::Edat, Some(Ok(LtvcEntry::Pidx))) => {
+                (Spo::Ahdr | Spo::Edat, Some(Ok(LtvcEntry::Pidx))) => {
                     debug!("PIDX");
                     self.state = Spo::Header(Header::Pidx);
                 }
@@ -102,9 +101,9 @@ impl<R: Read> Iterator for LtvcLinear<R> {
 
                 // Unhandled states
                 // TODO: improve debuggability
-                (s, None) => panic!("In state: {:?} unexpected end of iterator", s),
-                (s, Some(Err(_))) => panic!("In state: {:?} error on iterator", s),
-                (s, Some(Ok(_))) => panic!("In state: {:?} unknown LtvcEntry", s),
+                (s, None) => panic!("In state: {s:?} unexpected end of iterator"),
+                (s, Some(Err(_))) => panic!("In state: {s:?} error on iterator"),
+                (s, Some(Ok(_))) => panic!("In state: {s:?} unknown LtvcEntry"),
             }
         }
     }

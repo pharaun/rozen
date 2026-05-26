@@ -1,9 +1,9 @@
-use std::convert::TryInto;
+use std::convert::TryInto as _;
 use std::fmt;
 use std::io::{Read, copy};
 
 use std::hash::Hash as StdHash;
-use std::hash::Hasher as StdHasher;
+use std::hash::Hasher as _;
 use twox_hash::XxHash32;
 
 use serde::Deserialize;
@@ -19,12 +19,18 @@ use crate::rcore::key;
 // Make the checksum api be similiar to blake3's
 pub struct Checksum(XxHash32);
 
+impl Default for Checksum {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Checksum {
-    pub fn new() -> Checksum {
+    pub fn new() -> Self {
         // TODO: Evaulate seed of 0, might be better to start with a non-zero seed
         // (verify that feeding a sequence of 0 doesn't end up with the checksum being 0)
         // (Check ordering ie 0x00 + 0x01 vs 0x01 + 0x00 == same checksum for eg)
-        Checksum(XxHash32::with_seed(0))
+        Self(XxHash32::with_seed(0))
     }
 
     pub fn update(&mut self, data: &[u8]) {
@@ -66,7 +72,7 @@ pub fn to_hex(hash: &Hash) -> String {
 
 impl From<[u8; 32]> for Hash {
     fn from(bytes: [u8; 32]) -> Self {
-        Hash(blake3::Hash::from(bytes))
+        Self(blake3::Hash::from(bytes))
     }
 }
 
@@ -85,7 +91,7 @@ impl Serialize for Hash {
 
 struct HashVisitor;
 
-impl<'de> Visitor<'de> for HashVisitor {
+impl Visitor<'_> for HashVisitor {
     type Value = Hash;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -111,7 +117,7 @@ impl<'de> Visitor<'de> for HashVisitor {
 }
 
 impl<'de> Deserialize<'de> for Hash {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Hash, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_byte_buf(HashVisitor)
     }
 }

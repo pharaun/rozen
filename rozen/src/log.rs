@@ -21,7 +21,7 @@ use binrw::{BinRead, BinResult, BinWrite, Endian, binrw};
 #[binrw]
 #[brw(little, magic = b"ROZ-STRA")]
 #[derive(Debug, PartialEq)]
-pub struct StrataHeader {
+pub(crate) struct StrataHeader {
     pub version: u8,
     pub basin_id: u8,
     pub strata_id: u16,
@@ -29,7 +29,7 @@ pub struct StrataHeader {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct ChecksumWrapper<T> {
+pub(crate) struct ChecksumWrapper<T> {
     inner: T,
 }
 
@@ -61,16 +61,15 @@ where
 
         // Validate the checksum
         if computed_checksum == parsed_checksum {
-            Ok(ChecksumWrapper { inner: parsed_data })
+            Ok(Self { inner: parsed_data })
         } else {
             Err(binrw::Error::Custom {
                 pos: end,
                 err: Box::new(
                     format!(
-                        "Bad Checksum: {:#x?} != {:#x?}",
-                        computed_checksum, parsed_checksum
+                        "Bad Checksum: {computed_checksum:#x?} != {parsed_checksum:#x?}"
                     )
-                    .to_string(),
+                    ,
                 ),
             })
         }
@@ -118,7 +117,7 @@ impl<T: WriteEndian> WriteEndian for ChecksumWrapper<T> {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, PartialEq)]
-pub struct Grain {
+pub(crate) struct Grain {
     pub grain_id: u32,
     pub key: hash::Hash,
     pub part: u32,
@@ -138,12 +137,12 @@ pub struct Grain {
 #[binrw]
 #[brw(little)]
 #[derive(Debug)]
-pub struct StrataFooter {
+pub(crate) struct StrataFooter {
     pub hash: hash::Hash,
     // TODO: some sort of authentication signature to close the file.
 }
 
-pub struct StrataIndexEntity {
+pub(crate) struct StrataIndexEntity {
     pub key: hash::Hash,
     pub part: u32,
     pub grain_id: u32,
@@ -152,7 +151,7 @@ pub struct StrataIndexEntity {
 }
 
 // Handles the bookkeeping for writing a Strata out
-pub struct StrataWriter<W: Write> {
+pub(crate) struct StrataWriter<W: Write> {
     inner: W,
     inner_pos: usize,
     index: Vec<StrataIndexEntity>,
@@ -160,15 +159,15 @@ pub struct StrataWriter<W: Write> {
 }
 
 impl<W: Write> StrataWriter<W> {
-    pub fn new(writer: W) -> Self {
-        StrataWriter {
+    pub(crate) fn new(writer: W) -> Self {
+        Self {
             inner: writer,
             inner_pos: 0,
             index: Vec::new(),
         }
     }
 
-    pub fn into_inner(self) -> W {
+    pub(crate) fn into_inner(self) -> W {
         self.inner
     }
 
@@ -183,7 +182,7 @@ impl<W: Write> StrataWriter<W> {
         Ok(size)
     }
 
-    pub fn write_header(&mut self, basin_id: u8, strata_id: u16) -> Result<usize, Error> {
+    pub(crate) fn write_header(&mut self, basin_id: u8, strata_id: u16) -> Result<usize, Error> {
         let header = ChecksumWrapper {
             inner: StrataHeader {
                 version: 1,
@@ -195,7 +194,7 @@ impl<W: Write> StrataWriter<W> {
         self.write_binrw_record(header)
     }
 
-    pub fn write_footer(&mut self) -> Result<usize, Error> {
+    pub(crate) fn write_footer(&mut self) -> Result<usize, Error> {
         let footer = StrataFooter {
             hash: from_hex("38236e791c18434a1fad1dd6f96c4ce0d58bb69ca04d80d8e1325d7cb20476be")
                 .unwrap(),
@@ -204,7 +203,7 @@ impl<W: Write> StrataWriter<W> {
         self.write_binrw_record(footer)
     }
 
-    pub fn write_grain(
+    pub(crate) fn write_grain(
         &mut self,
         key: hash::Hash,
         part: u32,

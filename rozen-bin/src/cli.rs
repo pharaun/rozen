@@ -11,7 +11,7 @@ use rozen::rcore::key::DiskKey;
 #[command(name = "Rozen")]
 #[command(about = "Whole file dedup backup to a remote (AWS S3)")]
 #[command(author, version, long_about = None)]
-pub struct Cli {
+pub(crate) struct Cli {
     /// Sets a custom config file
     #[arg(short, long, value_name = "FILE")]
     pub config: Option<PathBuf>,
@@ -24,7 +24,7 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
-pub enum Commands {
+pub(crate) enum Commands {
     /// Init the repo
     #[command(group(ArgGroup::new("aws")
                         .args(["aws_region", "aws_bucket"])
@@ -75,7 +75,7 @@ pub enum Commands {
 // At a later time honor: https://aws.amazon.com/blogs/security/a-new-and-standardized-way-to-manage-credentials-in-the-aws-sdks/
 // envy = "0.4.2" - for grabbing the env vars via serde
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Config {
+pub(crate) struct Config {
     pub symlink: bool,
     pub same_fs: bool,
 
@@ -86,7 +86,7 @@ pub struct Config {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Source {
+pub(crate) struct Source {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
 
@@ -95,6 +95,6 @@ pub struct Source {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy)]
-pub enum SourceType {
+pub(crate) enum SourceType {
     AppendOnly,
 }

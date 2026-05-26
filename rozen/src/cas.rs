@@ -47,14 +47,14 @@ use crate::sql::Map;
 //      * Fetch sub-parts of the data stream (ranged get)
 //      * Fetch whole thing
 //      * Manage s3/glacier/deep-freeze lifecycle (adjecent system, not in backend directly)
-pub struct ObjectStore<'a, B: Remote + 'a> {
+pub(crate) struct ObjectStore<'a, B: Remote> {
     remote: &'a B,
     current_pack: Option<PackBuilder<Box<dyn Write>>>,
     map: Map,
 }
 
 impl<'a, B: Remote> ObjectStore<'a, B> {
-    pub fn new(remote: &'a mut B) -> Self {
+    pub(crate) fn new(remote: &'a mut B) -> Self {
         // TODO: later do something like fetch the latest cache and use that
         ObjectStore {
             remote,
@@ -63,7 +63,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         }
     }
 
-    pub fn append<R: Read>(
+    pub(crate) fn append<R: Read>(
         &mut self,
         hash: &hash::Hash,
         key: &key::MemKey,
@@ -131,7 +131,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         pack_id
     }
 
-    pub fn finalize<W: Write>(mut self, map_content: W, key: &key::MemKey) {
+    pub(crate) fn finalize<W: Write>(mut self, map_content: W, key: &key::MemKey) {
         // Force an finalize if its not already finalized
         if self.current_pack.is_some() {
             self.current_pack.take().unwrap().finalize(key);
@@ -148,14 +148,14 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
 }
 
 // This should do it in a streaming manner
-pub struct ObjectFetch<'a, B: Remote + 'a> {
+pub(crate) struct ObjectFetch<'a, B: Remote> {
     remote: &'a mut B,
     cache: HashMap<hash::Hash, PackOut>,
     map: Map,
 }
 
 impl<'a, B: Remote> ObjectFetch<'a, B> {
-    pub fn new(remote: &'a mut B, map: Map) -> Self {
+    pub(crate) fn new(remote: &'a mut B, map: Map) -> Self {
         ObjectFetch {
             remote,
             cache: HashMap::new(),
@@ -163,13 +163,13 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
         }
     }
 
-    pub fn get_content(&mut self, key: &key::MemKey, hash: &hash::Hash) -> Option<Box<dyn Read>> {
+    pub(crate) fn get_content(&mut self, key: &key::MemKey, hash: &hash::Hash) -> Option<Box<dyn Read>> {
         // 1. map to get content -> packfile
         match self.map.find_pack(hash) {
             Some(pack) => {
                 // 2. pack_cache to get packfile
                 if !self.cache.contains_key(&pack) {
-                    info!("Loading packfile: {:?}", pack);
+                    info!("Loading packfile: {pack:?}");
 
                     let mut pack_read = self.remote.read(Typ::Pack, &pack).unwrap();
                     let pack_file = PackOut::load(&mut pack_read, key);

@@ -1,4 +1,4 @@
-use std::io::{Read, Seek, SeekFrom, Write, copy};
+use std::io::{Read, Seek as _, SeekFrom, Write, copy};
 use std::path::Path;
 use zstd::stream::read::Decoder;
 use zstd::stream::read::Encoder;
@@ -57,7 +57,7 @@ pub fn append<B: Remote, W: Write>(
                                 let meta = e.metadata().unwrap();
                                 debug!("len: {:?}", meta.len());
 
-                                let mut file_data = std::fs::File::open(e.path()).unwrap();
+                                let mut file_data = File::open(e.path()).unwrap();
 
                                 // Hasher
                                 let content_hash = hash::hash(key, &mut file_data).unwrap();
@@ -86,7 +86,7 @@ pub fn append<B: Remote, W: Write>(
                         }
                     }
                 }
-                Err(e) => warn!("ERRR: {:?}", e),
+                Err(e) => warn!("ERRR: {e:?}"),
             }
         }
 
@@ -126,7 +126,7 @@ pub fn fetch<B: Remote, R: Read>(
         let content_hash = hash::hash(key, &mut hash_file).unwrap();
 
         let is_same = hash == content_hash;
-        info!("\tSAME: {:5} - PATH: {:?}", is_same, target_path);
+        info!("\tSAME: {is_same:5} - PATH: {target_path:?}");
     });
 }
 
@@ -142,8 +142,8 @@ pub fn verify<B: Remote, R: Read>(
     // Dump the sqlite db data so we can view what it is
     println!("VERIFYING:");
     walk_files(index_content, map_content, key, |path, perm, pack, hash| {
-        println!("\tHASH: {:?}", hash);
-        println!("\t\tPACK: {:?}", pack);
+        println!("\tHASH: {hash:?}");
+        println!("\t\tPACK: {pack:?}");
 
         // Find or load the packfile
         if !pack_cache.contains_key(&pack) {
@@ -164,11 +164,11 @@ pub fn verify<B: Remote, R: Read>(
             let mut und = Decoder::new(&mut dec).unwrap();
             let content_hash = hash::hash(key, &mut und).unwrap();
 
-            println!("\tPATH: {:?}", path);
-            println!("\tPERM: {:?}", perm);
+            println!("\tPATH: {path:?}");
+            println!("\tPERM: {perm:?}");
 
             let is_same = hash == content_hash;
-            println!("\tSAME: {:5}", is_same);
+            println!("\tSAME: {is_same:5}");
         }
     });
 }
