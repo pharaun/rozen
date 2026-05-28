@@ -65,12 +65,9 @@ where
         } else {
             Err(binrw::Error::Custom {
                 pos: end,
-                err: Box::new(
-                    format!(
-                        "Bad Checksum: {computed_checksum:#x?} != {parsed_checksum:#x?}"
-                    )
-                    ,
-                ),
+                err: Box::new(format!(
+                    "Bad Checksum: {computed_checksum:#x?} != {parsed_checksum:#x?}"
+                )),
             })
         }
     }

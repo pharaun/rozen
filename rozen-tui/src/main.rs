@@ -70,11 +70,7 @@ impl InlineProgress {
         ratatui::restore();
     }
 
-    fn run(
-        &mut self,
-        workers: Vec<Worker>,
-        downloads: Downloads,
-    ) -> Result<(), Box<dyn Error>> {
+    fn run(&mut self, workers: Vec<Worker>, downloads: Downloads) -> Result<(), Box<dyn Error>> {
         run(&mut self.terminal, workers, downloads, &self.rx)
     }
 }

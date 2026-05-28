@@ -163,7 +163,11 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
         }
     }
 
-    pub(crate) fn get_content(&mut self, key: &key::MemKey, hash: &hash::Hash) -> Option<Box<dyn Read>> {
+    pub(crate) fn get_content(
+        &mut self,
+        key: &key::MemKey,
+        hash: &hash::Hash,
+    ) -> Option<Box<dyn Read>> {
         // 1. map to get content -> packfile
         match self.map.find_pack(hash) {
             Some(pack) => {
