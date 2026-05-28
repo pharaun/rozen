@@ -28,16 +28,25 @@ pub(super) struct LtvcReader<R: Read> {
 // to force the stream to skip to the next non-edat chunk
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub(super) enum LtvcEntry<R: Read> {
-    Ahdr { version: u8 },
-    Fhdr { hash: Hash },
+    Ahdr {
+        version: u8,
+    },
+    Fhdr {
+        hash: Hash,
+    },
     Shdr,
     Aidx,
     Pidx,
-    Edat { data: EdatReader<R> },
-    Aend { idx: usize },
+    Edat {
+        data: EdatReader<R>,
+    },
+    #[expect(dead_code)]
+    Aend {
+        idx: usize,
+    },
 }
 
-pub struct EdatReader<R: Read> {
+pub(crate) struct EdatReader<R: Read> {
     inner: Rc<RefCell<Peekable<LtvcReaderRaw<R>>>>,
     out_buf: Vec<u8>,
 }

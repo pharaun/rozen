@@ -1,3 +1,4 @@
+#![expect(unused_qualifications)]
 use std::io::Cursor;
 use std::io::Error;
 
@@ -139,6 +140,7 @@ pub(crate) struct StrataFooter {
     // TODO: some sort of authentication signature to close the file.
 }
 
+#[expect(dead_code)]
 pub(crate) struct StrataIndexEntity {
     pub key: hash::Hash,
     pub part: u32,
@@ -155,6 +157,7 @@ pub(crate) struct StrataWriter<W: Write> {
     // TODO: add a live hasher for the footer
 }
 
+#[expect(dead_code)]
 impl<W: Write> StrataWriter<W> {
     pub(crate) fn new(writer: W) -> Self {
         Self {

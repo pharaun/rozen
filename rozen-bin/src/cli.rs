@@ -91,7 +91,7 @@ pub(crate) struct Source {
     pub exclude: Vec<String>,
 
     #[serde(rename = "type")]
-    pub source_type: SourceType,
+    pub typ: SourceType,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy)]

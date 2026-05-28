@@ -27,7 +27,7 @@ enum Spo {
 
 pub struct EdatStream<R: Read> {
     pub header: Header,
-    pub data: EdatReader<R>,
+    pub(crate) data: EdatReader<R>,
 }
 
 pub struct LtvcLinear<R: Read> {

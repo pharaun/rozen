@@ -42,7 +42,7 @@ unused_result_ok = "warn"
 unused_trait_names = "warn"
 unwrap_used = "warn"
 print_stderr = "warn"
-print_stdout = "warn"
+#print_stdout = "warn"
 
 # Nursery
 nursery = { level = "warn", priority = -1 }

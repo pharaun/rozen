@@ -59,4 +59,4 @@ iter-read = { version = "1", optional = true }
 aws-config = { version = "1.5", optional = true }
 aws-sdk-s3 = { version = "1.78", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
-bytes = { version = "*", optional = true }
+bytes = { version = "1.11", optional = true }

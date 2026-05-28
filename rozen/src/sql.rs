@@ -1,6 +1,7 @@
 use rusqlite as rs;
 
 use log::debug;
+use std::error::Error;
 use std::io::{Read, Seek as _, SeekFrom, Write, copy};
 use std::path::Path;
 use zstd::stream::read::Decoder;
@@ -39,48 +40,48 @@ struct SqlDb {
     conn: Connection,
 }
 
+#[derive(Clone, Copy)]
 enum UnloadType {
     Shdr,
     Pidx,
 }
 
 impl SqlDb {
-    fn new() -> Self {
-        let db_tmp = tempfile::NamedTempFile::new().unwrap();
-        let conn = Connection::open(db_tmp.path()).unwrap();
-        Self { db_tmp, conn }
+    fn new() -> Result<Self, Box<dyn Error>> {
+        let db_tmp = tempfile::NamedTempFile::new()?;
+        let conn = Connection::open(db_tmp.path())?;
+        Ok(Self { db_tmp, conn })
     }
 
-    fn attach(&self, db: &Path, name: &str) {
+    fn attach(&self, db: &Path, name: &str) -> Result<(), Box<dyn Error>> {
+        self.conn.execute_batch(&format!(
+            "ATTACH DATABASE '{}' as {};",
+            &(db.display()),
+            name
+        ))?;
+        Ok(())
+    }
+
+    fn detach(&self, name: &str) -> Result<(), Box<dyn Error>> {
         self.conn
-            .execute_batch(&format!(
-                "ATTACH DATABASE '{}' as {};",
-                &(db.display()),
-                name
-            ))
-            .unwrap();
+            .execute_batch(&format!("DETACH DATABASE {name};"))?;
+        Ok(())
     }
 
-    fn detach(&self, name: &str) {
-        self.conn
-            .execute_batch(&format!("DETACH DATABASE {name};"))
-            .unwrap();
-    }
-
-    fn load<R: Read>(reader: &mut R, key: &key::MemKey) -> Self {
+    fn load<R: Read>(reader: &mut R, key: &key::MemKey) -> Result<Self, Box<dyn Error>> {
         let ltvc = LtvcLinear::new(reader);
 
         for EdatStream { header, data } in ltvc {
             match header {
                 Header::Shdr | Header::Pidx => {
-                    let mut db_tmp = tempfile::NamedTempFile::new().unwrap();
+                    let mut db_tmp = tempfile::NamedTempFile::new()?;
 
-                    let mut dec = crypto::decrypt(key, data).unwrap();
-                    let mut und = Decoder::new(&mut dec).unwrap();
-                    copy(&mut und, &mut db_tmp).unwrap();
+                    let mut dec = crypto::decrypt(key, data)?;
+                    let mut und = Decoder::new(&mut dec)?;
+                    copy(&mut und, &mut db_tmp)?;
 
-                    let conn = Connection::open(db_tmp.path()).unwrap();
-                    return Self { db_tmp, conn };
+                    let conn = Connection::open(db_tmp.path())?;
+                    return Ok(Self { db_tmp, conn });
                 }
 
                 // Skip header we don't care for
@@ -89,21 +90,26 @@ impl SqlDb {
         }
 
         // Shouldn't reach here, we didn't find what we needed
-        panic!("Did not find Shdr or Pidx in the stream!");
+        Err("Did not find Shdr or Pidx in the stream!".into())
     }
 
-    fn unload<W: Write>(self, header: UnloadType, key: &key::MemKey, writer: W) {
-        self.conn.close().unwrap();
+    fn unload<W: Write>(
+        self,
+        header: UnloadType,
+        key: &key::MemKey,
+        writer: W,
+    ) -> Result<(), Box<dyn Error>> {
+        let _ = self.conn.close();
 
         let mut ltvc = LtvcIndexing::new(writer);
 
         let mut db_file = self.db_tmp.into_file();
 
-        let content_hash = hash::hash(key, &mut db_file).unwrap();
-        db_file.seek(SeekFrom::Start(0)).unwrap();
+        let content_hash = hash::hash(key, &mut db_file)?;
+        db_file.seek(SeekFrom::Start(0))?;
 
-        let comp = Encoder::new(&mut db_file, 21).unwrap();
-        let mut enc = crypto::encrypt(key, comp).unwrap();
+        let comp = Encoder::new(&mut db_file, 21)?;
+        let mut enc = crypto::encrypt(key, comp)?;
 
         match header {
             UnloadType::Shdr => ltvc.append_snapshot(content_hash, &mut enc),
@@ -111,6 +117,7 @@ impl SqlDb {
         }
 
         ltvc.finalize(false, key);
+        Ok(())
     }
 }
 
@@ -119,52 +126,50 @@ pub(crate) struct Index {
 }
 
 impl Index {
-    pub(crate) fn new() -> Self {
-        let db = SqlDb::new();
+    pub(crate) fn new() -> Result<Self, Box<dyn Error>> {
+        let db = SqlDb::new()?;
 
-        db.conn
-            .execute_batch(
-                "CREATE TABLE files (
+        db.conn.execute_batch(
+            "CREATE TABLE files (
                     path VARCHAR NOT NULL,
                     permission INTEGER NOT NULL,
                     content_hash VARCHAR NOT NULL
                  );",
-            )
-            .unwrap();
+        )?;
 
-        Self { db }
+        Ok(Self { db })
     }
 
-    pub(crate) fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Self {
-        Self {
-            db: SqlDb::load(index, key),
-        }
+    pub(crate) fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            db: SqlDb::load(index, key)?,
+        })
     }
 
-    pub(crate) fn unload<W: Write>(self, key: &key::MemKey, writer: W) {
-        self.db.unload(UnloadType::Shdr, key, writer);
+    pub(crate) fn unload<W: Write>(
+        self,
+        key: &key::MemKey,
+        writer: W,
+    ) -> Result<(), Box<dyn Error>> {
+        self.db.unload(UnloadType::Shdr, key, writer)?;
+        Ok(())
     }
 
     // TODO: improve the types
-    pub(crate) fn insert_file(&self, path: &Path, hash: &hash::Hash) {
-        let mut file_stmt = self
-            .db
-            .conn
-            .prepare_cached(
-                "INSERT INTO files
+    pub(crate) fn insert_file(&self, path: &Path, hash: &hash::Hash) -> Result<(), Box<dyn Error>> {
+        let mut file_stmt = self.db.conn.prepare_cached(
+            "INSERT INTO files
                  (path, permission, content_hash)
                  VALUES
                  (?, ?, ?)",
-            )
-            .unwrap();
+        )?;
 
-        file_stmt
-            .execute(rs::params![
-                format!("{}", path.display()),
-                0000,
-                hash::to_hex(hash),
-            ])
-            .unwrap();
+        file_stmt.execute(rs::params![
+            format!("{}", path.display()),
+            0000,
+            hash::to_hex(hash),
+        ])?;
+        Ok(())
     }
 }
 
@@ -173,113 +178,114 @@ pub(crate) struct Map {
 }
 
 impl Map {
-    pub(crate) fn new() -> Self {
-        let db = SqlDb::new();
+    pub(crate) fn new() -> Result<Self, Box<dyn Error>> {
+        let db = SqlDb::new()?;
 
-        db.conn
-            .execute_batch(
-                "CREATE TABLE packfiles (
+        db.conn.execute_batch(
+            "CREATE TABLE packfiles (
                     content_hash VARCHAR NOT NULL,
                     pack_hash VARCHAR NOT NULL
                 );",
-            )
-            .unwrap();
+        )?;
 
-        Self { db }
+        Ok(Self { db })
     }
 
-    pub(crate) fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Self {
-        Self {
-            db: SqlDb::load(index, key),
-        }
+    pub(crate) fn load<R: Read>(index: &mut R, key: &key::MemKey) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            db: SqlDb::load(index, key)?,
+        })
     }
 
-    pub(crate) fn unload<W: Write>(self, key: &key::MemKey, writer: W) {
-        self.db.unload(UnloadType::Pidx, key, writer);
+    pub(crate) fn unload<W: Write>(
+        self,
+        key: &key::MemKey,
+        writer: W,
+    ) -> Result<(), Box<dyn Error>> {
+        self.db.unload(UnloadType::Pidx, key, writer)?;
+        Ok(())
     }
 
     // TODO: improve the types
-    pub(crate) fn insert_chunk(&self, chunk: &hash::Hash, pack: &hash::Hash) {
-        let mut pack_stmt = self
-            .db
-            .conn
-            .prepare_cached(
-                "INSERT INTO packfiles
+    pub(crate) fn insert_chunk(
+        &self,
+        chunk: &hash::Hash,
+        pack: &hash::Hash,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut pack_stmt = self.db.conn.prepare_cached(
+            "INSERT INTO packfiles
                  (content_hash, pack_hash)
                  VALUES
                  (?, ?)",
-            )
-            .unwrap();
+        )?;
 
-        pack_stmt
-            .execute(rs::params![hash::to_hex(chunk), hash::to_hex(pack),])
-            .unwrap();
+        pack_stmt.execute(rs::params![hash::to_hex(chunk), hash::to_hex(pack),])?;
+        Ok(())
     }
 
-    pub(crate) fn find_pack(&self, chunk: &hash::Hash) -> Option<hash::Hash> {
-        let mut query_stmt = self
-            .db
-            .conn
-            .prepare_cached(
-                "SELECT pack_hash
+    pub(crate) fn find_pack(&self, chunk: &hash::Hash) -> Result<hash::Hash, Box<dyn Error>> {
+        let mut query_stmt = self.db.conn.prepare_cached(
+            "SELECT pack_hash
              FROM packfiles
              WHERE content_hash = ?",
-            )
-            .unwrap();
+        )?;
 
-        query_stmt
-            .query_row(rs::params![hash::to_hex(chunk)], |row| {
-                let hash: String = row.get(0).unwrap();
-                Ok(hash::from_hex(&hash).unwrap())
-            })
-            .ok()
+        Ok(
+            query_stmt.query_row(rs::params![hash::to_hex(chunk)], |row| {
+                let hash: String = row.get(0)?;
+                Ok(hash::from_hex(&hash).expect("don't want to deal with hex conversion error"))
+            })?,
+        )
     }
 }
 
-pub(crate) fn walk_files<R, F>(index: &mut R, map: &mut R, key: &key::MemKey, mut f: F)
+pub(crate) fn walk_files<R, F>(
+    index: &mut R,
+    map: &mut R,
+    key: &key::MemKey,
+    mut f: F,
+) -> Result<(), Box<dyn Error>>
 where
-    F: FnMut(&str, u32, hash::Hash, hash::Hash),
+    F: FnMut(&str, u32, hash::Hash, hash::Hash) -> Result<(), Box<dyn Error>>,
     R: Read,
 {
     // Load up the index db
     debug!("Loading INDEX db");
-    let idx = Index::load(index, key).db;
+    let idx = Index::load(index, key)?.db;
     let map_file = {
         debug!("Loading MAP db");
-        let m = Map::load(map, key).db;
+        let m = Map::load(map, key)?.db;
         let _ = m.conn.close();
         m.db_tmp
     };
-    idx.attach(map_file.path(), "map");
+    idx.attach(map_file.path(), "map")?;
 
     // Do query stuff
     {
-        let mut dump_stmt = idx
-            .conn
-            .prepare_cached(
-                "SELECT f.path, f.permission, m.pack_hash, f.content_hash
+        let mut dump_stmt = idx.conn.prepare_cached(
+            "SELECT f.path, f.permission, m.pack_hash, f.content_hash
                  FROM main.files f
                  INNER JOIN map.packfiles m ON
                     m.content_hash = f.content_hash;",
-            )
-            .unwrap();
-        let mut rows = dump_stmt.query([]).unwrap();
+        )?;
+        let mut rows = dump_stmt.query([])?;
         while let Ok(Some(row)) = rows.next() {
-            let path: String = row.get(0).unwrap();
-            let perm: u32 = row.get(1).unwrap();
-            let pack: String = row.get(2).unwrap();
-            let hash: String = row.get(3).unwrap();
+            let path: String = row.get(0)?;
+            let perm: u32 = row.get(1)?;
+            let pack: String = row.get(2)?;
+            let hash: String = row.get(3)?;
 
             f(
                 path.as_str(),
                 perm,
-                hash::from_hex(&pack).unwrap(),
-                hash::from_hex(&hash).unwrap(),
-            );
+                hash::from_hex(&pack)?,
+                hash::from_hex(&hash)?,
+            )?;
         }
     }
 
     // Cleanup
-    idx.detach("map");
+    idx.detach("map")?;
     let _ = idx.conn.close();
+    Ok(())
 }

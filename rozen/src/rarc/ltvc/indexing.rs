@@ -21,7 +21,7 @@ use crate::rarc::ltvc::builder::LtvcBuilder;
 pub struct HeaderIdx {
     pub typ: [u8; 4],
 
-    #[bw(map = crate::rcore::hash::Hash::as_bytes)]
+    #[bw(map = hash::Hash::as_bytes)]
     #[br(map = |x: [u8; 32]| x.into())]
     pub hash: hash::Hash,
 

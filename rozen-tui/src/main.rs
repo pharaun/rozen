@@ -45,26 +45,27 @@ impl InlineProgress {
     fn handle_input(&self) {
         let tx = self.tx.clone();
         let tick_rate = Duration::from_millis(self.tick_rate);
-        thread::spawn(move || {
+        thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
             let mut last_tick = Instant::now();
             loop {
                 // poll for tick rate duration, if no events, sent tick event.
                 let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-                if event::poll(timeout).unwrap() {
-                    match event::read().unwrap() {
-                        event::Event::Key(key) => tx.send(Event::Input(key)).unwrap(),
-                        event::Event::Resize(_, _) => tx.send(Event::Resize).unwrap(),
+                if event::poll(timeout)? {
+                    match event::read()? {
+                        event::Event::Key(key) => tx.send(Event::Input(key))?,
+                        event::Event::Resize(_, _) => tx.send(Event::Resize)?,
                         _ => {}
                     }
                 }
                 if last_tick.elapsed() >= tick_rate {
-                    tx.send(Event::Tick).unwrap();
+                    tx.send(Event::Tick)?;
                     last_tick = Instant::now();
                 }
             }
         });
     }
 
+    #[expect(clippy::unused_self)]
     fn done(self) {
         // TODO: exit the handler thread
         ratatui::restore();
@@ -83,8 +84,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut downloads = downloads();
 
     for w in &workers {
-        let d = downloads.next(w.id).unwrap();
-        w.tx.send(d).unwrap();
+        let d = downloads.next(w.id).ok_or("Asdf")?;
+        w.tx.send(d)?;
     }
 
     let app_result = progress.run(workers, downloads);
@@ -146,7 +147,7 @@ fn workers(tx: mpsc::Sender<Event>) -> Vec<Worker> {
         .map(|id| {
             let (worker_tx, worker_rx) = mpsc::channel::<Download>();
             let tx = tx.clone();
-            thread::spawn(move || {
+            thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
                 while let Ok(download) = worker_rx.recv() {
                     let mut remaining = download.size;
                     while remaining > 0 {
@@ -154,11 +155,11 @@ fn workers(tx: mpsc::Sender<Event>) -> Vec<Worker> {
                         thread::sleep(Duration::from_millis(wait * 10));
                         remaining = remaining.saturating_sub(10);
                         let progress = (download.size - remaining) * 100 / download.size;
-                        tx.send(Event::DownloadUpdate(id, download.id, progress as f64))
-                            .unwrap();
+                        tx.send(Event::DownloadUpdate(id, download.id, progress as f64))?;
                     }
-                    tx.send(Event::DownloadDone(id, download.id)).unwrap();
+                    tx.send(Event::DownloadDone(id, download.id))?;
                 }
+                Ok(())
             });
             Worker { id, tx: worker_tx }
         })
@@ -208,12 +209,12 @@ where
             }
             Event::Tick => {}
             Event::DownloadUpdate(worker_id, _download_id, progress) => {
-                let download = downloads.in_progress.get_mut(&worker_id).unwrap();
+                let download = downloads.in_progress.get_mut(&worker_id).ok_or("asdf")?;
                 download.progress = progress;
                 redraw = false;
             }
             Event::DownloadDone(worker_id, download_id) => {
-                let download = downloads.in_progress.remove(&worker_id).unwrap();
+                let download = downloads.in_progress.remove(&worker_id).ok_or("down")?;
                 terminal.insert_before(1, |buf| {
                     Paragraph::new(Line::from(vec![
                         Span::from("Finished "),
@@ -229,7 +230,7 @@ where
                     .render(buf.area, buf);
                 })?;
                 match downloads.next(worker_id) {
-                    Some(d) => workers[worker_id].tx.send(d).unwrap(),
+                    Some(d) => workers[worker_id].tx.send(d)?,
                     None => {
                         if downloads.in_progress.is_empty() {
                             terminal.insert_before(1, |buf| {
@@ -245,7 +246,7 @@ where
     Ok(())
 }
 
-fn render(frame: &mut Frame, downloads: &Downloads) {
+fn render(frame: &mut Frame<'_>, downloads: &Downloads) {
     let area = frame.area();
 
     let block = Block::new().title(Line::from("Progress").centered());
@@ -266,7 +267,7 @@ fn render(frame: &mut Frame, downloads: &Downloads) {
     frame.render_widget(progress, progress_area);
 
     // in progress downloads
-    let items: Vec<ListItem> = downloads
+    let items: Vec<ListItem<'_>> = downloads
         .in_progress
         .values()
         .map(|download| {

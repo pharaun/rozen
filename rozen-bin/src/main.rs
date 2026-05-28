@@ -2,6 +2,7 @@ use ignore::WalkBuilder;
 
 use std::io::{Read, Write};
 use std::path::Path;
+use std::error::Error;
 use tempfile::TempDir;
 
 use clap::Parser as _;
@@ -32,9 +33,9 @@ use rozen::snapshot;
 //  * B-<hash>.p1
 //  * B-<hash>.p? - I'm not sure, could have B-<hash> -> metadata -> B-<hash>.p? but could
 //      also just always have the B-<hash> xor B-<hash>.p?
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
-    crypto::init().unwrap();
+    crypto::init()?;
 
     // Parse the cli
     let cli = cli::Cli::parse();
@@ -45,7 +46,7 @@ fn main() {
 
     // Build a s3 remote here - Overrides the sql feature
     #[cfg(feature = "s3")]
-    let mut remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333").unwrap();
+    let mut remote = remote::s3::S3::new_endpoint("test", "http://localhost:8333")?;
 
     // TODO: should use a user given password, hardcode for ease of test right now
     let password = "ThisIsAPassword";
@@ -53,36 +54,37 @@ fn main() {
     match &cli.command {
         Some(Commands::Init { .. }) => {
             // Dump config to a TEST typ
-            let mut config_content = remote.write_multi_filename(Typ::TEST, "CONFIG").unwrap();
+            let mut config_content = remote.write_multi_filename(Typ::TEST, "CONFIG")?;
 
             // For now just focus on figuring out some sort of key management/generation here
-            init(&mut config_content, password);
+            init(&mut config_content, password)?;
+            Ok(())
         }
         Some(Commands::List) => {
-            list(&mut remote);
+            list(&remote)
         }
         Some(Commands::Append { tag }) => {
             let timestamp = OffsetDateTime::now_utc();
 
-            let mut config_content = remote.read_filename(Typ::TEST, "CONFIG").unwrap();
+            let mut config_content = remote.read_filename(Typ::TEST, "CONFIG")?;
             let mut config_str = String::new();
-            config_content.read_to_string(&mut config_str).unwrap();
-            let config: cli::Config = toml::from_str(&config_str).unwrap();
+            config_content.read_to_string(&mut config_str)?;
+            let config: cli::Config = toml::from_str(&config_str)?;
 
-            append(&config, password, &mut remote, timestamp, tag.clone());
+            append(&config, password, &mut remote, timestamp, tag.clone())
         }
         Some(Commands::Fetch {
             timestamp,
             tag,
             dir,
         }) => {
-            let timestamp = OffsetDateTime::from_unix_timestamp(*timestamp).unwrap();
+            let timestamp = OffsetDateTime::from_unix_timestamp(*timestamp)?;
             let target = dir.as_path();
 
-            let mut config_content = remote.read_filename(Typ::TEST, "CONFIG").unwrap();
+            let mut config_content = remote.read_filename(Typ::TEST, "CONFIG")?;
             let mut config_str = String::new();
-            config_content.read_to_string(&mut config_str).unwrap();
-            let config: cli::Config = toml::from_str(&config_str).unwrap();
+            config_content.read_to_string(&mut config_str)?;
+            let config: cli::Config = toml::from_str(&config_str)?;
 
             fetch(
                 &config,
@@ -91,23 +93,23 @@ fn main() {
                 timestamp,
                 tag.clone(),
                 target,
-            );
+            )
         }
         Some(Commands::Test) => {
             println!("TEST ONLY");
             let timestamp = OffsetDateTime::now_utc();
             let tag = Some("TEST".to_owned());
-            let target = TempDir::new().unwrap();
+            let target = TempDir::new()?;
 
-            let mut config_content = remote.write_multi_filename(Typ::TEST, "CONFIG").unwrap();
-            init(&mut config_content, password);
+            let mut config_content = remote.write_multi_filename(Typ::TEST, "CONFIG")?;
+            init(&mut config_content, password)?;
 
-            let mut config_content = remote.read_filename(Typ::TEST, "CONFIG").unwrap();
+            let mut config_content = remote.read_filename(Typ::TEST, "CONFIG")?;
             let mut config_str = String::new();
-            config_content.read_to_string(&mut config_str).unwrap();
-            let config: cli::Config = toml::from_str(&config_str).unwrap();
+            config_content.read_to_string(&mut config_str)?;
+            let config: cli::Config = toml::from_str(&config_str)?;
 
-            append(&config, password, &mut remote, timestamp, tag.clone());
+            append(&config, password, &mut remote, timestamp, tag.clone())?;
             fetch(
                 &config,
                 password,
@@ -115,17 +117,17 @@ fn main() {
                 timestamp,
                 tag.clone(),
                 target.path(),
-            );
-            list(&mut remote);
+            )?;
+            list(&remote)?;
 
             // TODO: add support to picking an target/combo and verifying
-            verify(&config, password, &mut remote, timestamp, tag);
+            verify(&config, password, &mut remote, timestamp, tag)
         }
-        None => (),
+        None => Ok(()),
     }
 }
 
-fn init(config_content: &mut Box<dyn Write>, password: &str) {
+fn init(config_content: &mut Box<dyn Write>, password: &str) -> Result<(), Box<dyn Error>> {
     // TODO: make all of this much beter, ie maybe make it generate all of the needed
     // stuff at the top then generate commented out sample section and then go from there
     let mut sample_config: cli::Config = toml::from_str(
@@ -139,8 +141,7 @@ fn init(config_content: &mut Box<dyn Write>, password: &str) {
             type = "AppendOnly"
 
         "#,
-    )
-    .unwrap();
+    )?;
     info!("CONFIG: {sample_config:?}");
 
     // Generate a new MemKey and convert it to DiskKey to store in the config
@@ -149,27 +150,29 @@ fn init(config_content: &mut Box<dyn Write>, password: &str) {
     sample_config.disk_key = Some(disk_key);
 
     info!("CONFIG2: {sample_config:?}");
-    let toml = toml::to_string(&sample_config).unwrap();
+    let toml = toml::to_string(&sample_config)?;
 
     // Dump to output stream
-    config_content.write_all(toml.as_bytes()).unwrap();
-    config_content.flush().unwrap();
+    config_content.write_all(toml.as_bytes())?;
+    config_content.flush()?;
+    Ok(())
 }
 
-fn list<B: Remote>(remote: &mut B) {
+fn list<B: Remote>(remote: &B) -> Result<(), Box<dyn Error>> {
     // TODO: add the following fields/option
     // 1. timestamp
     // 2. size (of stored backup?)
     // 3. Prefix name - I-{timestamp}-{name}
-    for key in remote.list_keys(Typ::Index).unwrap() {
-        let (typ, odt, tag) = from_key(&key);
+    for key in remote.list_keys(Typ::Index)? {
+        let (typ, odt, tag) = from_key(&key)?;
         println!(
             "Typ: {}, odt: {}, tag: {:?}",
             typ,
-            odt.format(&Rfc3339).unwrap(),
+            odt.format(&Rfc3339)?,
             tag
         );
     }
+    Ok(())
 }
 
 fn append<B: Remote>(
@@ -178,15 +181,15 @@ fn append<B: Remote>(
     remote: &mut B,
     timestamp: OffsetDateTime,
     tag: Option<String>,
-) {
+) -> Result<(), Box<dyn Error>> {
     // Config bits
-    let target = config.sources.first().unwrap().include.first().unwrap();
-    let _xclude = config.sources.first().unwrap().exclude.first().unwrap();
-    let _stype = config.sources.first().unwrap().source_type;
-    let key = config.disk_key.as_ref().unwrap().to_mem_key(password);
+    let target = config.sources.first().ok_or("config")?.include.first().ok_or("config")?;
+    let _xclude = config.sources.first().ok_or("config")?.exclude.first().ok_or("config")?;
+    let _stype = config.sources.first().ok_or("config")?.typ;
+    let key = config.disk_key.as_ref().ok_or("config")?.to_mem_key(password);
 
     // Store indexer + Map
-    let (mut index_content, mut map_content) = write_snapshot(remote, timestamp, tag);
+    let (mut index_content, mut map_content) = write_snapshot(remote, timestamp, tag)?;
 
     // Perform an appending snapshot
     snapshot::append(
@@ -200,7 +203,7 @@ fn append<B: Remote>(
             .same_file_system(config.same_fs)
             .sort_by_file_name(Ord::cmp)
             .build(),
-    );
+    )
 }
 
 fn fetch<B: Remote>(
@@ -210,10 +213,10 @@ fn fetch<B: Remote>(
     timestamp: OffsetDateTime,
     tag: Option<String>,
     target: &Path,
-) {
-    let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag.clone());
-    let (_, mut map_content_2) = read_snapshot(remote, timestamp, tag);
-    let key = config.disk_key.as_ref().unwrap().to_mem_key(password);
+) -> Result<(), Box<dyn Error>> {
+    let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag.clone())?;
+    let (_, mut map_content_2) = read_snapshot(remote, timestamp, tag)?;
+    let key = config.disk_key.as_ref().ok_or("dadf")?.to_mem_key(password);
 
     snapshot::fetch(
         &key,
@@ -222,7 +225,7 @@ fn fetch<B: Remote>(
         &mut map_content,
         &mut map_content_2,
         target,
-    );
+    )
 }
 
 // TODO: add a verify_all to validate the entire backup archive
@@ -232,42 +235,40 @@ fn verify<B: Remote>(
     remote: &mut B,
     timestamp: OffsetDateTime,
     tag: Option<String>,
-) {
-    let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag);
-    let key = config.disk_key.as_ref().unwrap().to_mem_key(password);
+) -> Result<(), Box<dyn Error>> {
+    let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag)?;
+    let key = config.disk_key.as_ref().ok_or("Asdf")?.to_mem_key(password);
 
-    snapshot::verify(&key, remote, &mut index_content, &mut map_content);
+    snapshot::verify(&key, remote, &mut index_content, &mut map_content)
 }
 
+#[expect(clippy::type_complexity)]
 fn read_snapshot<B: Remote>(
     remote: &mut B,
     timestamp: OffsetDateTime,
     tag: Option<String>,
-) -> (Box<dyn Read>, Box<dyn Read>) {
+) -> Result<(Box<dyn Read>, Box<dyn Read>), Box<dyn Error>> {
     let index_content = remote
-        .read_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))
-        .unwrap();
+        .read_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))?;
     let map_content = remote
-        .read_filename(Typ::Map, &to_key("M", timestamp, tag))
-        .unwrap();
+        .read_filename(Typ::Map, &to_key("M", timestamp, tag))?;
 
-    (index_content, map_content)
+    Ok((index_content, map_content))
 }
 
+#[expect(clippy::type_complexity)]
 fn write_snapshot<B: Remote>(
-    remote: &mut B,
+    remote: &B,
     timestamp: OffsetDateTime,
     tag: Option<String>,
-) -> (Box<dyn Write>, Box<dyn Write>) {
+) -> Result<(Box<dyn Write>, Box<dyn Write>), Box<dyn Error>> {
     let index_content = remote
-        .write_multi_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))
-        .unwrap();
+        .write_multi_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))?;
 
     let map_content = remote
-        .write_multi_filename(Typ::Map, &to_key("M", timestamp, tag))
-        .unwrap();
+        .write_multi_filename(Typ::Map, &to_key("M", timestamp, tag))?;
 
-    (index_content, map_content)
+    Ok((index_content, map_content))
 }
 
 fn to_key(typ: &str, timestamp: OffsetDateTime, tag: Option<String>) -> String {
@@ -277,20 +278,20 @@ fn to_key(typ: &str, timestamp: OffsetDateTime, tag: Option<String>) -> String {
     }
 }
 
-fn from_key(key: &str) -> (&str, OffsetDateTime, Option<&str>) {
+fn from_key(key: &str) -> Result<(&str, OffsetDateTime, Option<&str>), Box<dyn Error>> {
     let items: Vec<&str> = key.split('-').collect();
 
     match items[..] {
-        [ty, ts, tag] => (
+        [ty, ts, tag] => Ok((
             ty,
-            OffsetDateTime::from_unix_timestamp(ts.parse::<i64>().unwrap()).unwrap(),
+            OffsetDateTime::from_unix_timestamp(ts.parse::<i64>()?)?,
             Some(tag),
-        ),
-        [ty, ts] => (
+        )),
+        [ty, ts] => Ok((
             ty,
-            OffsetDateTime::from_unix_timestamp(ts.parse::<i64>().unwrap()).unwrap(),
+            OffsetDateTime::from_unix_timestamp(ts.parse::<i64>()?)?,
             None,
-        ),
+        )),
         _ => panic!("Wrong length split!"),
     }
 }

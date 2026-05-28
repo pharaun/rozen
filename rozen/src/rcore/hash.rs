@@ -46,7 +46,7 @@ impl Checksum {
 #[binrw]
 #[br(map = |x: [u8; 32]| x.into())]
 #[bw(map = Self::as_bytes)]
-#[derive(PartialEq, Eq, Clone, Debug, StdHash)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, StdHash)]
 pub struct Hash(blake3::Hash);
 
 // TODO: Should require a 'hash type' here so that we can know
@@ -94,7 +94,7 @@ struct HashVisitor;
 impl Visitor<'_> for HashVisitor {
     type Value = Hash;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "a byte array containing 32 bytes")
     }
 

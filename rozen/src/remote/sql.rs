@@ -11,7 +11,7 @@ use crate::rcore::buf::fill_buf;
 use crate::remote::Remote;
 use crate::remote::Typ;
 
-#[allow(clippy::identity_op)]
+#[expect(clippy::identity_op)]
 const CHUNK_SIZE: usize = 1 * 1024;
 
 pub struct SqlVFS {

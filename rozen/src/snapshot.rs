@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::io::{Read, Seek as _, SeekFrom, Write, copy};
 use std::path::Path;
 use zstd::stream::read::Decoder;
@@ -40,9 +41,9 @@ pub fn append<B: Remote, W: Write>(
     index_content: W,
     map_content: W,
     walker: ignore::Walk,
-) {
-    let index = Index::new();
-    let mut cas = ObjectStore::new(remote);
+) -> Result<(), Box<dyn Error>> {
+    let index = Index::new()?;
+    let mut cas = ObjectStore::new(remote)?;
 
     {
         for entry in walker {
@@ -54,24 +55,24 @@ pub fn append<B: Remote, W: Write>(
                             if ft.is_file() {
                                 info!("COMP: {}", e.path().display());
 
-                                let meta = e.metadata().unwrap();
+                                let meta = e.metadata()?;
                                 debug!("len: {:?}", meta.len());
 
-                                let mut file_data = File::open(e.path()).unwrap();
+                                let mut file_data = File::open(e.path())?;
 
                                 // Hasher
-                                let content_hash = hash::hash(key, &mut file_data).unwrap();
-                                file_data.seek(SeekFrom::Start(0)).unwrap();
+                                let content_hash = hash::hash(key, &mut file_data)?;
+                                file_data.seek(SeekFrom::Start(0))?;
 
                                 // TODO: need to make sure that each stage always calls
                                 // some form of finalize on its into_inner reader object
                                 // so that it can flush it up the pipeline into the output.
 
-                                let comp = Encoder::new(&mut file_data, 21).unwrap();
-                                let mut enc = crypto::encrypt(key, comp).unwrap();
+                                let comp = Encoder::new(&mut file_data, 21)?;
+                                let mut enc = crypto::encrypt(key, comp)?;
 
                                 // Stream the data into the CAS system
-                                cas.append(&content_hash, key, &mut enc, meta.len());
+                                cas.append(&content_hash, key, &mut enc, meta.len())?;
 
                                 // Load file info into index
                                 // Snapshot will be '<packfile-id>:<hash-id>' to pull out
@@ -79,7 +80,7 @@ pub fn append<B: Remote, W: Write>(
                                 //  list of <packfile-id> with <hash-id>s
                                 // TODO: better to just store content-id because it can be moved
                                 // around in packfile after compaction
-                                index.insert_file(e.path(), &content_hash);
+                                index.insert_file(e.path(), &content_hash)?;
                             } else {
                                 info!("SKIP: {}", e.path().display());
                             }
@@ -91,8 +92,9 @@ pub fn append<B: Remote, W: Write>(
         }
 
         // Finalize the CAS
-        cas.finalize(map_content, key);
-        index.unload(key, index_content);
+        cas.finalize(map_content, key)?;
+        index.unload(key, index_content)?;
+        Ok(())
     }
 }
 
@@ -105,29 +107,31 @@ pub fn fetch<B: Remote, R: Read>(
     map_content: &mut R,
     map_content_2: &mut R,
     target: &Path,
-) {
-    let map = Map::load(map_content, key);
+) -> Result<(), Box<dyn Error>> {
+    let map = Map::load(map_content, key)?;
     let mut cas = ObjectFetch::new(remote, map);
     walk_files(index_content, map_content_2, key, |path, _, _, hash| {
-        let data = cas.get_content(key, &hash).unwrap();
+        let data = cas.get_content(key, &hash).ok_or("get_content")?;
 
         // Verify the data
-        let mut dec = crypto::decrypt(key, data).unwrap();
-        let mut und = Decoder::new(&mut dec).unwrap();
+        let mut dec = crypto::decrypt(key, data)?;
+        let mut und = Decoder::new(&mut dec)?;
 
         // TODO: make this concurrent, for now, write to disk, then read and hash from disk.
         let target_path = target.join(path);
-        create_dir_all(target_path.parent().unwrap()).unwrap();
-        let mut target_file = File::create(&target_path).unwrap();
-        copy(&mut und, &mut target_file).unwrap();
-        target_file.sync_data().unwrap();
+        create_dir_all(target_path.parent().unwrap())?;
+        let mut target_file = File::create(&target_path)?;
+        copy(&mut und, &mut target_file)?;
+        target_file.sync_data()?;
 
-        let mut hash_file = File::open(&target_path).unwrap();
-        let content_hash = hash::hash(key, &mut hash_file).unwrap();
+        let mut hash_file = File::open(&target_path)?;
+        let content_hash = hash::hash(key, &mut hash_file)?;
 
         let is_same = hash == content_hash;
         info!("\tSAME: {is_same:5} - PATH: {target_path:?}");
-    });
+        Ok(())
+    })?;
+    Ok(())
 }
 
 pub fn verify<B: Remote, R: Read>(
@@ -135,7 +139,7 @@ pub fn verify<B: Remote, R: Read>(
     remote: &mut B,
     index_content: &mut R,
     map_content: &mut R,
-) {
+) -> Result<(), Box<dyn Error>> {
     // Cached packfile refs
     let mut pack_cache = HashMap::new();
 
@@ -147,7 +151,7 @@ pub fn verify<B: Remote, R: Read>(
 
         // Find or load the packfile
         if !pack_cache.contains_key(&pack) {
-            let mut pack_read = remote.read(Typ::Pack, &pack).unwrap();
+            let mut pack_read = remote.read(Typ::Pack, &pack)?;
             let pack_file = PackOut::load(&mut pack_read, key);
 
             pack_cache.insert(pack.clone(), pack_file);
@@ -160,9 +164,9 @@ pub fn verify<B: Remote, R: Read>(
                 .unwrap();
 
             // Process the data
-            let mut dec = crypto::decrypt(key, &data[..]).unwrap();
-            let mut und = Decoder::new(&mut dec).unwrap();
-            let content_hash = hash::hash(key, &mut und).unwrap();
+            let mut dec = crypto::decrypt(key, &data[..])?;
+            let mut und = Decoder::new(&mut dec)?;
+            let content_hash = hash::hash(key, &mut und)?;
 
             println!("\tPATH: {path:?}");
             println!("\tPERM: {perm:?}");
@@ -170,5 +174,7 @@ pub fn verify<B: Remote, R: Read>(
             let is_same = hash == content_hash;
             println!("\tSAME: {is_same:5}");
         }
-    });
+        Ok(())
+    })?;
+    Ok(())
 }

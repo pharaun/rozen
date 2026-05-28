@@ -1,5 +1,6 @@
 use log::info;
 use std::collections::HashMap;
+use std::error::Error;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
@@ -54,13 +55,13 @@ pub(crate) struct ObjectStore<'a, B: Remote> {
 }
 
 impl<'a, B: Remote> ObjectStore<'a, B> {
-    pub(crate) fn new(remote: &'a mut B) -> Self {
+    pub(crate) fn new(remote: &'a B) -> Result<Self, Box<dyn Error>> {
         // TODO: later do something like fetch the latest cache and use that
-        ObjectStore {
+        Ok(ObjectStore {
             remote,
             current_pack: None,
-            map: Map::new(),
-        }
+            map: Map::new()?,
+        })
     }
 
     pub(crate) fn append<R: Read>(
@@ -69,22 +70,23 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         key: &key::MemKey,
         reader: &mut R,
         size: u64,
-    ) {
+    ) -> Result<(), Box<dyn Error>> {
         let pack_id = if size > (3 * 1024) {
-            self.append_big(hash, key, reader)
+            self.append_big(hash, key, reader)?
         } else {
-            self.append_small(hash, key, reader)
+            self.append_small(hash, key, reader)?
         };
 
-        self.map.insert_chunk(hash, &pack_id);
+        self.map.insert_chunk(hash, &pack_id)?;
+        Ok(())
     }
 
     fn append_big<R: Read>(
-        &mut self,
+        &self,
         hash: &hash::Hash,
         key: &key::MemKey,
         reader: &mut R,
-    ) -> hash::Hash {
+    ) -> Result<hash::Hash, Box<dyn Error>> {
         // This one focuses on reading in one single big file into its own packfile and uploading
         // it as it is
         let mut temp_pack = {
@@ -98,7 +100,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
 
         temp_pack.finalize(key);
 
-        pack_id
+        Ok(pack_id)
     }
 
     fn append_small<R: Read>(
@@ -106,7 +108,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         hash: &hash::Hash,
         key: &key::MemKey,
         reader: &mut R,
-    ) -> hash::Hash {
+    ) -> Result<hash::Hash, Box<dyn Error>> {
         // Stream the data into the pack
         // TODO:
         //  1. compression complicates things for things below a certain
@@ -128,17 +130,22 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
             self.current_pack.take().unwrap().finalize(key);
         }
 
-        pack_id
+        Ok(pack_id)
     }
 
-    pub(crate) fn finalize<W: Write>(mut self, map_content: W, key: &key::MemKey) {
+    pub(crate) fn finalize<W: Write>(
+        mut self,
+        map_content: W,
+        key: &key::MemKey,
+    ) -> Result<(), Box<dyn Error>> {
         // Force an finalize if its not already finalized
         if self.current_pack.is_some() {
             self.current_pack.take().unwrap().finalize(key);
         }
 
         // Unload the sqlite file into remote as snapshot
-        self.map.unload(key, map_content);
+        self.map.unload(key, map_content)?;
+        Ok(())
     }
 
     // TODO:
@@ -170,7 +177,7 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
     ) -> Option<Box<dyn Read>> {
         // 1. map to get content -> packfile
         match self.map.find_pack(hash) {
-            Some(pack) => {
+            Ok(pack) => {
                 // 2. pack_cache to get packfile
                 if !self.cache.contains_key(&pack) {
                     info!("Loading packfile: {pack:?}");
@@ -194,7 +201,7 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
                     None
                 }
             }
-            None => None,
+            Err(_) => None,
         }
     }
 }
