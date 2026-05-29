@@ -4,6 +4,7 @@ pub mod sql;
 #[cfg(feature = "s3")]
 pub mod s3;
 
+use std::error::Error;
 use std::fmt;
 use std::io::{Read, Write};
 
@@ -33,25 +34,30 @@ impl fmt::Display for Typ {
 }
 
 pub trait Remote {
-    fn list_keys(&self, typ: Typ) -> Result<Box<dyn Iterator<Item = String>>, String>;
+    fn list_keys(&self, typ: Typ) -> Result<Box<dyn Iterator<Item = String>>, Box<dyn Error>>;
 
     // Api for reading/writing filenames
-    fn write_filename<R: Read>(&self, typ: Typ, filename: &str, reader: R) -> Result<(), String>;
-    fn read_filename(&mut self, typ: Typ, filename: &str) -> Result<Box<dyn Read>, String>;
+    fn write_filename<R: Read>(
+        &self,
+        typ: Typ,
+        filename: &str,
+        reader: R,
+    ) -> Result<(), Box<dyn Error>>;
+    fn read_filename(&mut self, typ: Typ, filename: &str) -> Result<Box<dyn Read>, Box<dyn Error>>;
 
     // Api for reading/Writing hashes to the remote
-    fn write<R: Read>(&self, typ: Typ, key: &hash::Hash, reader: R) -> Result<(), String> {
+    fn write<R: Read>(&self, typ: Typ, key: &hash::Hash, reader: R) -> Result<(), Box<dyn Error>> {
         self.write_filename(typ, &hash::to_hex(key), reader)
     }
-    fn read(&mut self, typ: Typ, key: &hash::Hash) -> Result<Box<dyn Read>, String> {
+    fn read(&mut self, typ: Typ, key: &hash::Hash) -> Result<Box<dyn Read>, Box<dyn Error>> {
         self.read_filename(typ, &hash::to_hex(key))
     }
 
     // Write Multipart, give a write handle and it will handle the streaming
     // TODO: consider if finalize on a trait is better than 'flush' for our purposes
-    fn write_multi_filename(&self, typ: Typ, key: &str) -> Result<Box<dyn Write>, String>;
+    fn write_multi_filename(&self, typ: Typ, key: &str) -> Result<Box<dyn Write>, Box<dyn Error>>;
 
-    fn write_multi(&self, typ: Typ, key: &hash::Hash) -> Result<Box<dyn Write>, String> {
+    fn write_multi(&self, typ: Typ, key: &hash::Hash) -> Result<Box<dyn Write>, Box<dyn Error>> {
         self.write_multi_filename(typ, &hash::to_hex(key))
     }
 }

@@ -48,10 +48,10 @@ impl Remote for S3 {
             .prefix(typ.to_string())
             .send();
 
-        let res = self.rt.block_on(async { call.await }).unwrap();
-        let contents = res.contents.unwrap();
+        let res = self.rt.block_on(async { call.await })?;
+        let contents = res.contents?;
 
-        Ok(Box::new(contents.into_iter().map(|x| x.key.unwrap())))
+        Ok(Box::new(contents.into_iter().map(|x| x.key?)))
     }
 
     // TODO: this and the multipart api needs to also do various checksums to pass on to s3
@@ -66,7 +66,7 @@ impl Remote for S3 {
         // manage the read here so we should be able to do something reasonable
         // here at some point
         let mut buf = Vec::new();
-        copy(&mut reader, &mut buf).unwrap();
+        copy(&mut reader, &mut buf)?;
 
         let stream = ByteStream::from(buf);
 
@@ -78,7 +78,7 @@ impl Remote for S3 {
             .key(format!("{}/{}", typ, filename))
             .send();
 
-        let _res = self.rt.block_on(async { call.await }).unwrap();
+        let _res = self.rt.block_on(async { call.await })?;
 
         Ok(())
     }
@@ -94,14 +94,14 @@ impl Remote for S3 {
             .key(format!("{}/{}", typ, filename))
             .send();
 
-        let res = self.rt.block_on(async { call.await }).unwrap();
+        let res = self.rt.block_on(async { call.await })?;
 
         let body_call = res.body.collect();
-        let data = self.rt.block_on(async { body_call.await.unwrap() });
+        let data = self.rt.block_on(async { body_call.await? });
         let mut data_read = data.reader();
 
         let mut buf = Vec::new();
-        copy(&mut data_read, &mut buf).unwrap();
+        copy(&mut data_read, &mut buf)?;
 
         Ok(Box::new(S3Read {
             _client: self.client.clone(),
@@ -118,13 +118,13 @@ impl Remote for S3 {
             .key(format!("{}/{}", typ, key))
             .send();
 
-        let res = self.rt.block_on(async { call.await }).unwrap();
+        let res = self.rt.block_on(async { call.await })?;
 
         Ok(Box::new(S3Multi {
             client: self.client.clone(),
             rt: self.rt.clone(),
             key: key.to_string(),
-            id: res.upload_id.unwrap(),
+            id: res.upload_id?,
             bucket: self.bucket.clone(),
             part: Vec::new(),
             part_id: 1,
@@ -177,7 +177,7 @@ impl Write for S3Multi {
             )
             .send();
 
-        let _res = self.rt.block_on(async { call.await }).unwrap();
+        let _res = self.rt.block_on(async { call.await })?;
         Ok(())
     }
 }
@@ -201,12 +201,12 @@ impl S3Multi {
                 .part_number(self.part_id)
                 .send();
 
-            let res = self.rt.block_on(async { call.await }).unwrap();
+            let res = self.rt.block_on(async { call.await })?;
 
             // Collect info to make a CompletePart to then record in finalize
             self.part.push(
                 CompletedPart::builder()
-                    .e_tag(res.e_tag.unwrap())
+                    .e_tag(res.e_tag?)
                     .part_number(self.part_id)
                     .build(),
             );

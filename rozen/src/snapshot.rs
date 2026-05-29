@@ -111,7 +111,7 @@ pub fn fetch<B: Remote, R: Read>(
     let map = Map::load(map_content, key)?;
     let mut cas = ObjectFetch::new(remote, map);
     walk_files(index_content, map_content_2, key, |path, _, _, hash| {
-        let data = cas.get_content(key, &hash).ok_or("get_content")?;
+        let data = cas.get_content(key, &hash)?.ok_or("get_content")?;
 
         // Verify the data
         let mut dec = crypto::decrypt(key, data)?;
@@ -119,7 +119,7 @@ pub fn fetch<B: Remote, R: Read>(
 
         // TODO: make this concurrent, for now, write to disk, then read and hash from disk.
         let target_path = target.join(path);
-        create_dir_all(target_path.parent().unwrap())?;
+        create_dir_all(target_path.parent().ok_or("parent")?)?;
         let mut target_file = File::create(&target_path)?;
         copy(&mut und, &mut target_file)?;
         target_file.sync_data()?;
@@ -152,7 +152,7 @@ pub fn verify<B: Remote, R: Read>(
         // Find or load the packfile
         if !pack_cache.contains_key(&pack) {
             let mut pack_read = remote.read(Typ::Pack, &pack)?;
-            let pack_file = PackOut::load(&mut pack_read, key);
+            let pack_file = PackOut::load(&mut pack_read, key)?;
 
             pack_cache.insert(pack.clone(), pack_file);
 

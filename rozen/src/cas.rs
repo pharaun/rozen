@@ -91,14 +91,14 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         // it as it is
         let mut temp_pack = {
             let pack_id = key.gen_id();
-            let multiwrite = self.remote.write_multi(Typ::Pack, &pack_id).unwrap();
-            PackBuilder::new(pack_id, multiwrite)
+            let multiwrite = self.remote.write_multi(Typ::Pack, &pack_id)?;
+            PackBuilder::new(pack_id, multiwrite)?
         };
         let pack_id = temp_pack.id.clone();
 
-        temp_pack.append(hash.clone(), reader);
+        temp_pack.append(hash.clone(), reader)?;
 
-        temp_pack.finalize(key);
+        temp_pack.finalize(key)?;
 
         Ok(pack_id)
     }
@@ -122,12 +122,12 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         let temp_pack = self.current_pack.get_or_insert_with(|| {
             let pack_id = key.gen_id();
             let multiwrite = self.remote.write_multi(Typ::Pack, &pack_id).unwrap();
-            PackBuilder::new(pack_id, multiwrite)
+            PackBuilder::new(pack_id, multiwrite).unwrap()
         });
         let pack_id = temp_pack.id.clone();
 
-        if temp_pack.append(hash.clone(), reader) {
-            self.current_pack.take().unwrap().finalize(key);
+        if temp_pack.append(hash.clone(), reader)? {
+            self.current_pack.take().ok_or("pack_take")?.finalize(key)?;
         }
 
         Ok(pack_id)
@@ -140,7 +140,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
     ) -> Result<(), Box<dyn Error>> {
         // Force an finalize if its not already finalized
         if self.current_pack.is_some() {
-            self.current_pack.take().unwrap().finalize(key);
+            self.current_pack.take().ok_or("pack_take")?.finalize(key)?;
         }
 
         // Unload the sqlite file into remote as snapshot
@@ -174,7 +174,7 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
         &mut self,
         key: &key::MemKey,
         hash: &hash::Hash,
-    ) -> Option<Box<dyn Read>> {
+    ) -> Result<Option<Box<dyn Read>>, Box<dyn Error>> {
         // 1. map to get content -> packfile
         match self.map.find_pack(hash) {
             Ok(pack) => {
@@ -182,8 +182,8 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
                 if !self.cache.contains_key(&pack) {
                     info!("Loading packfile: {pack:?}");
 
-                    let mut pack_read = self.remote.read(Typ::Pack, &pack).unwrap();
-                    let pack_file = PackOut::load(&mut pack_read, key);
+                    let mut pack_read = self.remote.read(Typ::Pack, &pack)?;
+                    let pack_file = PackOut::load(&mut pack_read, key)?;
 
                     self.cache.insert(pack.clone(), pack_file);
                 }
@@ -193,15 +193,15 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
                     let data: Vec<u8> = self
                         .cache
                         .get(&pack)
-                        .unwrap()
+                        .ok_or("get_pack")?
                         .find_hash(hash.clone())
-                        .unwrap();
-                    Some(Box::new(Cursor::new(data)))
+                        .ok_or("hashclone")?;
+                    Ok(Some(Box::new(Cursor::new(data))))
                 } else {
-                    None
+                    Ok(None)
                 }
             }
-            Err(_) => None,
+            Err(e) => Err(e),
         }
     }
 }

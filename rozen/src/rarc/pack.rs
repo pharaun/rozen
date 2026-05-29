@@ -1,6 +1,7 @@
 use binrw::BinRead as _;
 use log::debug;
 use std::collections::HashMap;
+use std::error::Error;
 use std::io::{Cursor, Read, Write, copy};
 use zstd::stream::read::Decoder;
 
@@ -30,22 +31,27 @@ pub struct PackBuilder<W: Write> {
 //  * Need to figure out a good way to handle the indexing or might just delegate
 //  to higher layer and just index on 'hash + part -> idx + len'
 impl<W: Write> PackBuilder<W> {
-    pub fn new(id: hash::Hash, writer: W) -> Self {
-        Self {
+    pub fn new(id: hash::Hash, writer: W) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
             id,
-            inner: LtvcIndexing::new(writer),
-        }
+            inner: LtvcIndexing::new(writer)?,
+        })
     }
 
-    pub fn append<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) -> bool {
-        self.inner.append_file(hash, reader);
-        self.inner.get_size() >= PACK_SIZE
+    pub fn append<R: Read>(
+        &mut self,
+        hash: hash::Hash,
+        reader: &mut R,
+    ) -> Result<bool, Box<dyn Error>> {
+        self.inner.append_file(hash, reader)?;
+        Ok(self.inner.get_size() >= PACK_SIZE)
     }
 
     // TODO: should hash+hmac various data bits in a packfile
     // Store the hmac hash of the packfile in packfile + snapshot itself.
-    pub fn finalize(self, key: &key::MemKey) {
-        self.inner.finalize(true, key);
+    pub fn finalize(self, key: &key::MemKey) -> Result<(), Box<dyn Error>> {
+        self.inner.finalize(true, key)?;
+        Ok(())
     }
 }
 
@@ -58,7 +64,7 @@ pub struct PackOut {
 }
 
 impl PackOut {
-    pub fn load<R: Read>(reader: &mut R, key: &key::MemKey) -> Self {
+    pub fn load<R: Read>(reader: &mut R, key: &key::MemKey) -> Result<Self, Box<dyn Error>> {
         let ltvc = LtvcLinear::new(reader);
         let mut idx: HashMap<hash::Hash, Vec<u8>> = HashMap::new();
         let mut chunk_idx: Vec<HeaderIdx> = vec![];
@@ -69,28 +75,27 @@ impl PackOut {
                     debug!("FHDR - EDAT");
 
                     let mut out_data = vec![];
-                    copy(&mut data, &mut out_data).unwrap();
+                    copy(&mut data, &mut out_data)?;
 
                     idx.insert(hash, out_data);
                 }
                 Header::Aidx => {
                     debug!("AIDX - EDAT");
                     let mut idx_buf: Vec<u8> = Vec::new();
-                    let mut dec = crypto::decrypt(key, &mut data).unwrap();
-                    let mut und = Decoder::new(&mut dec).unwrap();
-                    copy(&mut und, &mut idx_buf).unwrap();
+                    let mut dec = crypto::decrypt(key, &mut data)?;
+                    let mut und = Decoder::new(&mut dec)?;
+                    copy(&mut und, &mut idx_buf)?;
 
                     // Read the length of index then deserialize members
                     let mut index = Cursor::new(&idx_buf);
-                    let len: u32 = u32::read_le(&mut index).unwrap();
+                    let len: u32 = u32::read_le(&mut index)?;
                     chunk_idx = Vec::<HeaderIdx>::read_args(
                         &mut index,
                         binrw::VecArgs {
                             count: len as usize,
                             inner: (),
                         },
-                    )
-                    .unwrap();
+                    )?;
 
                     debug!("AIDX - EDAT - length: {}", chunk_idx.len());
                 }
@@ -100,10 +105,10 @@ impl PackOut {
             }
         }
 
-        Self {
+        Ok(Self {
             idx,
             _idx: chunk_idx,
-        }
+        })
     }
 
     pub fn find_hash(&self, hash: hash::Hash) -> Option<Vec<u8>> {

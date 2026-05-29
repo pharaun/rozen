@@ -101,7 +101,7 @@ impl SqlDb {
     ) -> Result<(), Box<dyn Error>> {
         let _ = self.conn.close();
 
-        let mut ltvc = LtvcIndexing::new(writer);
+        let mut ltvc = LtvcIndexing::new(writer)?;
 
         let mut db_file = self.db_tmp.into_file();
 
@@ -112,11 +112,11 @@ impl SqlDb {
         let mut enc = crypto::encrypt(key, comp)?;
 
         match header {
-            UnloadType::Shdr => ltvc.append_snapshot(content_hash, &mut enc),
-            UnloadType::Pidx => ltvc.append_pack_index(content_hash, &mut enc),
-        }
+            UnloadType::Shdr => ltvc.append_snapshot(content_hash, &mut enc)?,
+            UnloadType::Pidx => ltvc.append_pack_index(content_hash, &mut enc)?,
+        };
 
-        ltvc.finalize(false, key);
+        ltvc.finalize(false, key)?;
         Ok(())
     }
 }

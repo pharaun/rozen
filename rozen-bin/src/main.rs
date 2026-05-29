@@ -1,8 +1,8 @@
 use ignore::WalkBuilder;
 
+use std::error::Error;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::error::Error;
 use tempfile::TempDir;
 
 use clap::Parser as _;
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // In memory remote for data storage
     #[cfg(all(feature = "sql", not(feature = "s3")))]
-    let mut remote = remote::sql::SqlVFS::new(Some("test.sqlite"));
+    let mut remote = remote::sql::SqlVFS::new(Some("test.sqlite"))?;
 
     // Build a s3 remote here - Overrides the sql feature
     #[cfg(feature = "s3")]
@@ -60,9 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             init(&mut config_content, password)?;
             Ok(())
         }
-        Some(Commands::List) => {
-            list(&remote)
-        }
+        Some(Commands::List) => list(&remote),
         Some(Commands::Append { tag }) => {
             let timestamp = OffsetDateTime::now_utc();
 
@@ -146,7 +144,7 @@ fn init(config_content: &mut Box<dyn Write>, password: &str) -> Result<(), Box<d
 
     // Generate a new MemKey and convert it to DiskKey to store in the config
     let key = key::MemKey::new();
-    let disk_key = key.to_disk_key(password);
+    let disk_key = key.to_disk_key(password)?;
     sample_config.disk_key = Some(disk_key);
 
     info!("CONFIG2: {sample_config:?}");
@@ -183,10 +181,26 @@ fn append<B: Remote>(
     tag: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
     // Config bits
-    let target = config.sources.first().ok_or("config")?.include.first().ok_or("config")?;
-    let _xclude = config.sources.first().ok_or("config")?.exclude.first().ok_or("config")?;
+    let target = config
+        .sources
+        .first()
+        .ok_or("config")?
+        .include
+        .first()
+        .ok_or("config")?;
+    let _xclude = config
+        .sources
+        .first()
+        .ok_or("config")?
+        .exclude
+        .first()
+        .ok_or("config")?;
     let _stype = config.sources.first().ok_or("config")?.typ;
-    let key = config.disk_key.as_ref().ok_or("config")?.to_mem_key(password);
+    let key = config
+        .disk_key
+        .as_ref()
+        .ok_or("config")?
+        .to_mem_key(password)?;
 
     // Store indexer + Map
     let (mut index_content, mut map_content) = write_snapshot(remote, timestamp, tag)?;
@@ -216,7 +230,11 @@ fn fetch<B: Remote>(
 ) -> Result<(), Box<dyn Error>> {
     let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag.clone())?;
     let (_, mut map_content_2) = read_snapshot(remote, timestamp, tag)?;
-    let key = config.disk_key.as_ref().ok_or("dadf")?.to_mem_key(password);
+    let key = config
+        .disk_key
+        .as_ref()
+        .ok_or("dadf")?
+        .to_mem_key(password)?;
 
     snapshot::fetch(
         &key,
@@ -237,7 +255,11 @@ fn verify<B: Remote>(
     tag: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
     let (mut index_content, mut map_content) = read_snapshot(remote, timestamp, tag)?;
-    let key = config.disk_key.as_ref().ok_or("Asdf")?.to_mem_key(password);
+    let key = config
+        .disk_key
+        .as_ref()
+        .ok_or("Asdf")?
+        .to_mem_key(password)?;
 
     snapshot::verify(&key, remote, &mut index_content, &mut map_content)
 }
@@ -248,10 +270,8 @@ fn read_snapshot<B: Remote>(
     timestamp: OffsetDateTime,
     tag: Option<String>,
 ) -> Result<(Box<dyn Read>, Box<dyn Read>), Box<dyn Error>> {
-    let index_content = remote
-        .read_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))?;
-    let map_content = remote
-        .read_filename(Typ::Map, &to_key("M", timestamp, tag))?;
+    let index_content = remote.read_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))?;
+    let map_content = remote.read_filename(Typ::Map, &to_key("M", timestamp, tag))?;
 
     Ok((index_content, map_content))
 }
@@ -262,11 +282,10 @@ fn write_snapshot<B: Remote>(
     timestamp: OffsetDateTime,
     tag: Option<String>,
 ) -> Result<(Box<dyn Write>, Box<dyn Write>), Box<dyn Error>> {
-    let index_content = remote
-        .write_multi_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))?;
+    let index_content =
+        remote.write_multi_filename(Typ::Index, &to_key("I", timestamp, tag.clone()))?;
 
-    let map_content = remote
-        .write_multi_filename(Typ::Map, &to_key("M", timestamp, tag))?;
+    let map_content = remote.write_multi_filename(Typ::Map, &to_key("M", timestamp, tag))?;
 
     Ok((index_content, map_content))
 }

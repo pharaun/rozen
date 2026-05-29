@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde::Serialize;
+use std::error::Error;
 use std::io::{Cursor, Read, Write};
 use zstd::stream::read::Encoder;
 
@@ -55,7 +56,7 @@ pub struct LtvcIndexing<W: Write> {
 
 // This is the high level writer interface
 impl<W: Write> LtvcIndexing<W> {
-    pub fn new(writer: W) -> Self {
+    pub fn new(writer: W) -> Result<Self, Box<dyn Error>> {
         let mut indexer = Self {
             inner: LtvcBuilder::new(writer),
             h_idx: Vec::new(),
@@ -63,19 +64,23 @@ impl<W: Write> LtvcIndexing<W> {
         };
 
         // Start with the Archive Header (kinda serves as a magic bits)
-        indexer.idx += indexer.inner.write_ahdr(0x01).unwrap();
-        indexer
+        indexer.idx += indexer.inner.write_ahdr(0x01)?;
+        Ok(indexer)
     }
 
     pub fn get_size(&self) -> usize {
         self.idx
     }
 
-    pub fn append_file<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) {
+    pub fn append_file<R: Read>(
+        &mut self,
+        hash: hash::Hash,
+        reader: &mut R,
+    ) -> Result<(), Box<dyn Error>> {
         let f_idx = self.idx;
 
-        self.idx += self.inner.write_fhdr(&hash).unwrap();
-        self.idx += self.inner.write_edat(reader).unwrap();
+        self.idx += self.inner.write_fhdr(&hash)?;
+        self.idx += self.inner.write_edat(reader)?;
 
         self.h_idx.push(HeaderIdx {
             typ: *b"FHDR",
@@ -83,13 +88,18 @@ impl<W: Write> LtvcIndexing<W> {
             start_idx: f_idx,
             length: self.idx - f_idx,
         });
+        Ok(())
     }
 
-    pub fn append_snapshot<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) {
+    pub fn append_snapshot<R: Read>(
+        &mut self,
+        hash: hash::Hash,
+        reader: &mut R,
+    ) -> Result<(), Box<dyn Error>> {
         let s_idx = self.idx;
 
-        self.idx += self.inner.write_shdr().unwrap();
-        self.idx += self.inner.write_edat(reader).unwrap();
+        self.idx += self.inner.write_shdr()?;
+        self.idx += self.inner.write_edat(reader)?;
 
         self.h_idx.push(HeaderIdx {
             typ: *b"SHDR",
@@ -97,13 +107,18 @@ impl<W: Write> LtvcIndexing<W> {
             start_idx: s_idx,
             length: self.idx - s_idx,
         });
+        Ok(())
     }
 
-    pub fn append_pack_index<R: Read>(&mut self, hash: hash::Hash, reader: &mut R) {
+    pub fn append_pack_index<R: Read>(
+        &mut self,
+        hash: hash::Hash,
+        reader: &mut R,
+    ) -> Result<(), Box<dyn Error>> {
         let p_idx = self.idx;
 
-        self.idx += self.inner.write_pidx().unwrap();
-        self.idx += self.inner.write_edat(reader).unwrap();
+        self.idx += self.inner.write_pidx()?;
+        self.idx += self.inner.write_edat(reader)?;
 
         self.h_idx.push(HeaderIdx {
             typ: *b"PIDX",
@@ -111,30 +126,32 @@ impl<W: Write> LtvcIndexing<W> {
             start_idx: p_idx,
             length: self.idx - p_idx,
         });
+        Ok(())
     }
 
-    pub fn finalize(mut self, append_aidx: bool, key: &key::MemKey) {
+    pub fn finalize(mut self, append_aidx: bool, key: &key::MemKey) -> Result<(), Box<dyn Error>> {
         if append_aidx {
             let a_idx = self.idx;
 
-            self.idx += self.inner.write_aidx().unwrap();
+            self.idx += self.inner.write_aidx()?;
 
             // Write length of the h_idx then the h_idx
             let mut index = Cursor::new(Vec::new());
-            (self.h_idx.len() as u32).write_le(&mut index).unwrap();
-            self.h_idx.write(&mut index).unwrap();
+            (self.h_idx.len() as u32).write_le(&mut index)?;
+            self.h_idx.write(&mut index)?;
 
-            let comp = Encoder::new(&mut index, 21).unwrap();
-            let mut enc = crypto::encrypt(key, comp).unwrap();
+            let comp = Encoder::new(&mut index, 21)?;
+            let mut enc = crypto::encrypt(key, comp)?;
 
-            self.idx += self.inner.write_edat(&mut enc).unwrap();
-            self.idx += self.inner.write_aend(a_idx).unwrap();
+            self.idx += self.inner.write_edat(&mut enc)?;
+            self.idx += self.inner.write_aend(a_idx)?;
         } else {
-            self.idx += self.inner.write_aend(0x00_00_00_00).unwrap();
+            self.idx += self.inner.write_aend(0x00_00_00_00)?;
         }
 
         // Flush to signal to the backend that its done
-        self.inner.into_inner().flush().unwrap();
+        self.inner.into_inner().flush()?;
+        Ok(())
     }
 }
 
@@ -193,7 +210,7 @@ mod serialize {
 
         // Test encode options
         let mut index = Cursor::new(Vec::new());
-        idx.write(&mut index).unwrap();
+        idx.write(&mut index)?;
 
         println!("{}", hex::encode(index.into_inner()));
 

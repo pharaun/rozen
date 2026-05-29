@@ -1,6 +1,7 @@
 use iter_read::IterRead;
 use rusqlite as rs;
 use rusqlite::Connection;
+use std::error::Error;
 use std::io::{Cursor, Read, Write};
 
 // Single threaded but we are on one thread here for now
@@ -19,10 +20,10 @@ pub struct SqlVFS {
 }
 
 impl SqlVFS {
-    pub fn new(filename: Option<&str>) -> Self {
+    pub fn new(filename: Option<&str>) -> Result<Self, Box<dyn Error>> {
         let conn = match filename {
-            None => Connection::open_in_memory().unwrap(),
-            Some(f) => Connection::open(f).unwrap(),
+            None => Connection::open_in_memory()?,
+            Some(f) => Connection::open(f)?,
         };
 
         // Setup the db
@@ -36,66 +37,62 @@ impl SqlVFS {
                 UNIQUE(key, typ, chunk)
              );
              COMMIT;",
-        )
-        .unwrap();
+        )?;
 
-        SqlVFS {
+        Ok(SqlVFS {
             conn: Rc::new(conn),
-        }
+        })
     }
 }
 
 impl Remote for SqlVFS {
-    fn list_keys(&self, typ: Typ) -> Result<Box<dyn Iterator<Item = String>>, String> {
-        let mut stmt = self
-            .conn
-            .prepare_cached(
-                "SELECT DISTINCT key
+    fn list_keys(&self, typ: Typ) -> Result<Box<dyn Iterator<Item = String>>, Box<dyn Error>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT DISTINCT key
                  FROM blob
                  WHERE typ = ?",
-            )
-            .unwrap();
+        )?;
         Ok(Box::new(
             stmt.query_map(rs::params![typ.to_string()], |row| {
-                let x: String = row.get(0).unwrap();
+                let x: String = row.get(0)?;
                 Ok(x)
-            })
-            .unwrap()
+            })?
             .map(|item| item.unwrap())
             .collect::<Vec<String>>()
             .into_iter(),
         ))
     }
 
-    fn write_filename<R: Read>(&self, typ: Typ, filename: &str, reader: R) -> Result<(), String> {
+    fn write_filename<R: Read>(
+        &self,
+        typ: Typ,
+        filename: &str,
+        reader: R,
+    ) -> Result<(), Box<dyn Error>> {
         write_filename(self.conn.clone(), typ, filename, reader)
     }
 
-    fn read_filename(&mut self, typ: Typ, filename: &str) -> Result<Box<dyn Read>, String> {
-        let mut stmt = self
-            .conn
-            .prepare_cached(
-                "SELECT content
+    fn read_filename(&mut self, typ: Typ, filename: &str) -> Result<Box<dyn Read>, Box<dyn Error>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT content
                  FROM blob
                  WHERE key = ?
                  AND typ = ?
                  ORDER BY chunk ASC",
-            )
-            .unwrap();
+        )?;
 
         Ok(Box::new(IterRead::new(
             stmt.query_map(rs::params![filename, typ.to_string()], |row| {
-                let x: Vec<u8> = row.get(0).unwrap();
+                let x: Vec<u8> = row.get(0)?;
                 Ok(x)
-            })
-            .unwrap()
+            })?
             .flat_map(|item| item.unwrap())
             .collect::<Vec<u8>>()
             .into_iter(),
         )))
     }
 
-    fn write_multi_filename(&self, typ: Typ, key: &str) -> Result<Box<dyn Write>, String> {
+    fn write_multi_filename(&self, typ: Typ, key: &str) -> Result<Box<dyn Write>, Box<dyn Error>> {
         Ok(Box::new(VFSWrite {
             conn: self.conn.clone(),
             key: key.to_string(),
@@ -131,43 +128,37 @@ fn write_filename<R: Read>(
     typ: Typ,
     filename: &str,
     mut reader: R,
-) -> Result<(), String> {
+) -> Result<(), Box<dyn Error>> {
     // Delete any key chunks that exists before
     conn.prepare_cached(
         "DELETE FROM blob
          WHERE key = ?
          AND typ = ?",
-    )
-    .unwrap()
-    .execute(rs::params![filename, typ.to_string()])
-    .unwrap();
+    )?
+    .execute(rs::params![filename, typ.to_string()])?;
 
     // Insert new data
     let mut chunk_idx: i64 = 0;
 
     loop {
         let mut in_buf = [0u8; CHUNK_SIZE];
-        match fill_buf(&mut reader, &mut in_buf).unwrap() {
+        match fill_buf(&mut reader, &mut in_buf)? {
             (true, 0) => break,
             (_, len) => {
                 // Write a new chunk to the db
-                let mut file_stmt = conn
-                    .prepare_cached(
-                        "INSERT INTO blob
+                let mut file_stmt = conn.prepare_cached(
+                    "INSERT INTO blob
                          (key, typ, chunk, content)
                          VALUES
                          (?, ?, ?, ?)",
-                    )
-                    .unwrap();
+                )?;
 
-                file_stmt
-                    .execute(rs::params![
-                        filename,
-                        typ.to_string(),
-                        chunk_idx,
-                        &in_buf[..len],
-                    ])
-                    .unwrap();
+                file_stmt.execute(rs::params![
+                    filename,
+                    typ.to_string(),
+                    chunk_idx,
+                    &in_buf[..len],
+                ])?;
 
                 chunk_idx += 1;
             }

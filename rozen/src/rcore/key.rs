@@ -2,6 +2,7 @@ use sodiumoxide::crypto::pwhash::argon2id13;
 use sodiumoxide::crypto::secretbox;
 use sodiumoxide::crypto::secretstream;
 
+use std::error::Error;
 use std::fmt;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
@@ -88,9 +89,9 @@ impl MemKey {
     // 2. cpu/memory requirement for argon2id
     // 3. master key generation
     // 4. hmac key generation
-    pub fn to_disk_key(&self, password: &str) -> DiskKey {
+    pub fn to_disk_key(&self, password: &str) -> Result<DiskKey, Box<dyn Error>> {
         let salt = argon2id13::gen_salt();
-        let key = get_password_key(password, &salt);
+        let key = get_password_key(password, &salt)?;
 
         // We now have a key, encrypt the MemKeys
         let nonce = secretbox::gen_nonce();
@@ -102,7 +103,7 @@ impl MemKey {
             secretbox::seal(&data, &nonce, &key)
         };
 
-        DiskKey { salt, nonce, data }
+        Ok(DiskKey { salt, nonce, data })
     }
 }
 
@@ -130,14 +131,14 @@ pub struct DiskKey {
 
 impl DiskKey {
     // TODO: this can fail, support that
-    pub fn to_mem_key(&self, password: &str) -> MemKey {
-        let key = get_password_key(password, &self.salt);
+    pub fn to_mem_key(&self, password: &str) -> Result<MemKey, Box<dyn Error>> {
+        let key = get_password_key(password, &self.salt)?;
         let data = secretbox::open(&self.data, &self.nonce, &key).unwrap();
 
-        MemKey {
-            enc: secretstream::Key::from_slice(&data[0..32]).unwrap(),
-            hmac: secretstream::Key::from_slice(&data[32..64]).unwrap(),
-        }
+        Ok(MemKey {
+            enc: secretstream::Key::from_slice(&data[0..32]).ok_or("keyerr")?,
+            hmac: secretstream::Key::from_slice(&data[32..64]).ok_or("keyerr")?,
+        })
     }
 }
 
@@ -180,19 +181,21 @@ fn base64_salt_de<'de, D: Deserializer<'de>>(data: D) -> Result<argon2id13::Salt
     argon2id13::Salt::from_slice(&v[..]).ok_or_else(|| serde::de::Error::custom("Salt"))
 }
 
-fn get_password_key(password: &str, salt: &argon2id13::Salt) -> secretbox::Key {
+fn get_password_key(
+    password: &str,
+    salt: &argon2id13::Salt,
+) -> Result<secretbox::Key, Box<dyn Error>> {
     let mut key = secretbox::Key([0; secretbox::KEYBYTES]);
     {
         let secretbox::Key(ref mut kb) = key;
         // TODO: user-settable ops/mem limits
-        argon2id13::derive_key(
+        let _ = argon2id13::derive_key(
             kb,
             password.as_bytes(),
             salt,
             argon2id13::OPSLIMIT_INTERACTIVE,
             argon2id13::MEMLIMIT_INTERACTIVE,
-        )
-        .unwrap();
+        );
     }
-    key
+    Ok(key)
 }
