@@ -2,6 +2,7 @@ use iter_read::IterRead;
 use rusqlite as rs;
 use rusqlite::Connection;
 use std::error::Error;
+use std::io::ErrorKind;
 use std::io::{Cursor, Read, Write};
 
 // Single threaded but we are on one thread here for now
@@ -57,7 +58,7 @@ impl Remote for SqlVFS {
                 let x: String = row.get(0)?;
                 Ok(x)
             })?
-            .map(|item| item.unwrap())
+            .flatten()
             .collect::<Vec<String>>()
             .into_iter(),
         ))
@@ -69,7 +70,7 @@ impl Remote for SqlVFS {
         filename: &str,
         reader: R,
     ) -> Result<(), Box<dyn Error>> {
-        write_filename(Rc::clone(&self.conn), typ, filename, reader)
+        write_filename(&self.conn, typ, filename, reader)
     }
 
     fn read_filename(&mut self, typ: Typ, filename: &str) -> Result<Box<dyn Read>, Box<dyn Error>> {
@@ -86,7 +87,8 @@ impl Remote for SqlVFS {
                 let x: Vec<u8> = row.get(0)?;
                 Ok(x)
             })?
-            .flat_map(|item| item.unwrap())
+            .flatten()
+            .flatten()
             .collect::<Vec<u8>>()
             .into_iter(),
         )))
@@ -118,13 +120,14 @@ impl Write for VFSWrite {
     // TODO: not sure if this is proper use of flush or if we should have a finalize call instead
     fn flush(&mut self) -> Result<(), std::io::Error> {
         let data = Cursor::new(self.t_buf.clone());
-        write_filename(Rc::clone(&self.conn), self.typ, &self.key, data).unwrap();
+        write_filename(&self.conn, self.typ, &self.key, data)
+            .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e.to_string()))?;
         Ok(())
     }
 }
 
 fn write_filename<R: Read>(
-    conn: Rc<Connection>,
+    conn: &Rc<Connection>,
     typ: Typ,
     filename: &str,
     mut reader: R,

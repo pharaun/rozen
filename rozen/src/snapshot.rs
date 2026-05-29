@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::error::Error;
 use std::io::{Read, Seek as _, SeekFrom, Write, copy};
 use std::path::Path;
@@ -150,11 +151,11 @@ pub fn verify<B: Remote, R: Read>(
         println!("\t\tPACK: {pack:?}");
 
         // Find or load the packfile
-        if !pack_cache.contains_key(&pack) {
+        if let Entry::Vacant(e) = pack_cache.entry(pack) {
             let mut pack_read = remote.read(Typ::Pack, pack)?;
             let pack_file = PackOut::load(&mut pack_read, key)?;
 
-            pack_cache.insert(pack, pack_file);
+            e.insert(pack_file);
 
             // TODO: make this into a streaming read but for now copy data
             let data: Vec<u8> = pack_cache

@@ -1,4 +1,5 @@
 #![expect(unused_qualifications)]
+#![allow(clippy::cast_possible_truncation)]
 use std::io::Cursor;
 use std::io::Error;
 use std::io::ErrorKind;
@@ -177,12 +178,14 @@ impl<W: Write> StrataWriter<W> {
         self.inner
     }
 
-    fn write_binrw_record<T>(&mut self, record: T) -> Result<usize, Error>
+    fn write_binrw_record<T>(&mut self, record: &T) -> Result<usize, Error>
     where
         T: for<'a> BinWrite<Args<'a> = ()> + WriteEndian,
     {
         let mut cursor = Cursor::new(Vec::new());
-        record.write(&mut cursor).unwrap();
+        record
+            .write(&mut cursor)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
         let size = self.inner.write(&cursor.into_inner())?;
         self.inner_pos += size;
         Ok(size)
@@ -197,7 +200,7 @@ impl<W: Write> StrataWriter<W> {
             },
         };
 
-        self.write_binrw_record(header)
+        self.write_binrw_record(&header)
     }
 
     pub(crate) fn write_footer(&mut self) -> Result<usize, Error> {
@@ -206,7 +209,7 @@ impl<W: Write> StrataWriter<W> {
                 .expect("hexal"),
         };
 
-        self.write_binrw_record(footer)
+        self.write_binrw_record(&footer)
     }
 
     pub(crate) fn write_grain(
@@ -218,22 +221,20 @@ impl<W: Write> StrataWriter<W> {
         let grain = ChecksumWrapper {
             inner: Grain {
                 id: 1,
-                key: key,
+                key,
                 part,
                 data,
             },
         };
         let offset = self.inner_pos;
-        let length = self.write_binrw_record(grain)?;
+        let length = self.write_binrw_record(&grain)?;
 
         self.index.push(StrataIndexEntity {
             key,
             part,
             grain_id: 1,
-            offset: u32::try_from(offset)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
-            length: u32::try_from(length)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+            offset: u32::try_from(offset).map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
+            length: u32::try_from(length).map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
         });
         Ok(length)
     }

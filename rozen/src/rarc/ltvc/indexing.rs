@@ -43,6 +43,7 @@ fn varint_parser() -> binrw::BinResult<usize> {
 }
 
 #[binrw::writer(writer)]
+#[expect(clippy::trivially_copy_pass_by_ref)]
 fn varint_writer(integer: &usize) -> binrw::BinResult<()> {
     writer.write_varint(*integer)?;
     binrw::BinResult::Ok(())
@@ -137,7 +138,7 @@ impl<W: Write> LtvcIndexing<W> {
 
             // Write length of the h_idx then the h_idx
             let mut index = Cursor::new(Vec::new());
-            (self.h_idx.len() as u32).write_le(&mut index)?;
+            u32::try_from(self.h_idx.len())?.write_le(&mut index)?;
             self.h_idx.write(&mut index)?;
 
             let comp = Encoder::new(&mut index, 21)?;

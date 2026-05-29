@@ -1,3 +1,5 @@
+use std::io::Error;
+use std::io::ErrorKind;
 use std::io::Read;
 use std::iter::Peekable;
 use std::str::from_utf8;
@@ -77,7 +79,10 @@ impl<R: Read> Read for EdatReader<R> {
             if let Some(Ok(peek)) = inner.peek() {
                 if &peek.typ == b"EDAT" {
                     // We in business, grab it and stow the data in out_buf
-                    let edata = inner.next().unwrap().unwrap();
+                    let edata = inner
+                        .next()
+                        .ok_or(Error::new(ErrorKind::InvalidData, "Missing edat"))?
+                        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
 
                     self.out_buf = edata.data;
                 } else {
@@ -127,7 +132,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
 
                         // Should be 32 bytes for hash
                         assert!(len == 32, "FHDR malformed HASH length");
-                        let hash: [u8; 32] = entry.data[..len].try_into().unwrap();
+                        let hash: [u8; 32] = entry.data[..len].try_into().ok()?;
 
                         // Setup a EDAT reader
                         Some(Ok(LtvcEntry::Fhdr {

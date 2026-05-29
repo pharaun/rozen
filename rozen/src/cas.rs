@@ -119,14 +119,13 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         //  4. If below certain size go ahead and pack it up
         //  5. if above certain size just send it as its own archive to
         //     backend
-        let temp_pack = match self.current_pack.as_mut() {
-            Some(v) => v,
-            None => {
-                let pack_id = key.gen_id();
-                let multiwrite = self.remote.write_multi(Typ::Pack, pack_id)?;
-                self.current_pack
-                    .insert(PackBuilder::new(pack_id, multiwrite)?)
-            }
+        let temp_pack = if let Some(v) = self.current_pack.as_mut() {
+            v
+        } else {
+            let pack_id = key.gen_id();
+            let multiwrite = self.remote.write_multi(Typ::Pack, pack_id)?;
+            self.current_pack
+                .insert(PackBuilder::new(pack_id, multiwrite)?)
         };
         let pack_id = temp_pack.id;
 
