@@ -39,7 +39,7 @@ impl SqlVFS {
              COMMIT;",
         )?;
 
-        Ok(SqlVFS {
+        Ok(Self {
             conn: Rc::new(conn),
         })
     }
@@ -69,7 +69,7 @@ impl Remote for SqlVFS {
         filename: &str,
         reader: R,
     ) -> Result<(), Box<dyn Error>> {
-        write_filename(self.conn.clone(), typ, filename, reader)
+        write_filename(Rc::clone(&self.conn), typ, filename, reader)
     }
 
     fn read_filename(&mut self, typ: Typ, filename: &str) -> Result<Box<dyn Read>, Box<dyn Error>> {
@@ -94,8 +94,8 @@ impl Remote for SqlVFS {
 
     fn write_multi_filename(&self, typ: Typ, key: &str) -> Result<Box<dyn Write>, Box<dyn Error>> {
         Ok(Box::new(VFSWrite {
-            conn: self.conn.clone(),
-            key: key.to_string(),
+            conn: Rc::clone(&self.conn),
+            key: key.to_owned(),
             t_buf: Vec::new(),
             typ,
         }))
@@ -118,7 +118,7 @@ impl Write for VFSWrite {
     // TODO: not sure if this is proper use of flush or if we should have a finalize call instead
     fn flush(&mut self) -> Result<(), std::io::Error> {
         let data = Cursor::new(self.t_buf.clone());
-        write_filename(self.conn.clone(), self.typ, &self.key, data).unwrap();
+        write_filename(Rc::clone(&self.conn), self.typ, &self.key, data).unwrap();
         Ok(())
     }
 }

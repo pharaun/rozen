@@ -114,7 +114,7 @@ impl SqlDb {
         match header {
             UnloadType::Shdr => ltvc.append_snapshot(content_hash, &mut enc)?,
             UnloadType::Pidx => ltvc.append_pack_index(content_hash, &mut enc)?,
-        };
+        }
 
         ltvc.finalize(false, key)?;
         Ok(())
@@ -156,7 +156,7 @@ impl Index {
     }
 
     // TODO: improve the types
-    pub(crate) fn insert_file(&self, path: &Path, hash: &hash::Hash) -> Result<(), Box<dyn Error>> {
+    pub(crate) fn insert_file(&self, path: &Path, hash: hash::Hash) -> Result<(), Box<dyn Error>> {
         let mut file_stmt = self.db.conn.prepare_cached(
             "INSERT INTO files
                  (path, permission, content_hash)
@@ -209,8 +209,8 @@ impl Map {
     // TODO: improve the types
     pub(crate) fn insert_chunk(
         &self,
-        chunk: &hash::Hash,
-        pack: &hash::Hash,
+        chunk: hash::Hash,
+        pack: hash::Hash,
     ) -> Result<(), Box<dyn Error>> {
         let mut pack_stmt = self.db.conn.prepare_cached(
             "INSERT INTO packfiles
@@ -223,7 +223,7 @@ impl Map {
         Ok(())
     }
 
-    pub(crate) fn find_pack(&self, chunk: &hash::Hash) -> Result<hash::Hash, Box<dyn Error>> {
+    pub(crate) fn find_pack(&self, chunk: hash::Hash) -> Result<hash::Hash, Box<dyn Error>> {
         let mut query_stmt = self.db.conn.prepare_cached(
             "SELECT pack_hash
              FROM packfiles

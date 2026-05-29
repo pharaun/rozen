@@ -52,7 +52,7 @@ impl<R: Read> Iterator for LtvcLinear<R> {
         loop {
             match (self.state.clone(), self.inner.next()) {
                 // Assert that the first entry is an Ahdr with 0x01 as version
-                (Spo::Start, Some(Ok(LtvcEntry::Ahdr { version }))) if version == 0x01 => {
+                (Spo::Start, Some(Ok(LtvcEntry::Ahdr { version: 0x01 }))) => {
                     debug!("AHDR 0x01");
                     self.state = Spo::Ahdr;
                 }

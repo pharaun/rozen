@@ -55,6 +55,7 @@ impl<R: Read> LtvcReaderRaw<R> {
             hash.update(&typ);
 
             // Validate the header
+            #[expect(clippy::cast_possible_truncation)]
             if (hash.finalize() as u16) != header_hash {
                 return Err(LtvcError::HeaderChecksum);
             }

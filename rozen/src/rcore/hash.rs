@@ -37,6 +37,7 @@ impl Checksum {
         self.0.write(data);
     }
 
+    #[expect(clippy::cast_possible_truncation)]
     pub fn finalize(&self) -> u32 {
         self.0.finish() as u32
     }
@@ -66,7 +67,7 @@ pub fn from_hex(hash: &str) -> Result<Hash, blake3::HexError> {
     blake3::Hash::from_hex(hash).map(Hash)
 }
 
-pub fn to_hex(hash: &Hash) -> String {
+pub fn to_hex(hash: Hash) -> String {
     hash.0.to_hex().to_string()
 }
 

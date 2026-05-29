@@ -146,7 +146,7 @@ impl<R: Read> Iterator for LtvcReader<R> {
                         // Setup a EDAT reader
                         Some(Ok(LtvcEntry::Edat {
                             data: EdatReader {
-                                inner: self.inner.clone(),
+                                inner: Rc::clone(&self.inner),
                                 // Preseed it with *THIS* edat's data
                                 out_buf: entry.data,
                             },

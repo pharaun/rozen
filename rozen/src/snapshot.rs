@@ -72,7 +72,7 @@ pub fn append<B: Remote, W: Write>(
                                 let mut enc = crypto::encrypt(key, comp)?;
 
                                 // Stream the data into the CAS system
-                                cas.append(&content_hash, key, &mut enc, meta.len())?;
+                                cas.append(content_hash, key, &mut enc, meta.len())?;
 
                                 // Load file info into index
                                 // Snapshot will be '<packfile-id>:<hash-id>' to pull out
@@ -80,7 +80,7 @@ pub fn append<B: Remote, W: Write>(
                                 //  list of <packfile-id> with <hash-id>s
                                 // TODO: better to just store content-id because it can be moved
                                 // around in packfile after compaction
-                                index.insert_file(e.path(), &content_hash)?;
+                                index.insert_file(e.path(), content_hash)?;
                             } else {
                                 info!("SKIP: {}", e.path().display());
                             }
@@ -111,7 +111,7 @@ pub fn fetch<B: Remote, R: Read>(
     let map = Map::load(map_content, key)?;
     let mut cas = ObjectFetch::new(remote, map);
     walk_files(index_content, map_content_2, key, |path, _, _, hash| {
-        let data = cas.get_content(key, &hash)?.ok_or("get_content")?;
+        let data = cas.get_content(key, hash)?.ok_or("get_content")?;
 
         // Verify the data
         let mut dec = crypto::decrypt(key, data)?;
@@ -151,17 +151,17 @@ pub fn verify<B: Remote, R: Read>(
 
         // Find or load the packfile
         if !pack_cache.contains_key(&pack) {
-            let mut pack_read = remote.read(Typ::Pack, &pack)?;
+            let mut pack_read = remote.read(Typ::Pack, pack)?;
             let pack_file = PackOut::load(&mut pack_read, key)?;
 
-            pack_cache.insert(pack.clone(), pack_file);
+            pack_cache.insert(pack, pack_file);
 
             // TODO: make this into a streaming read but for now copy data
             let data: Vec<u8> = pack_cache
                 .get(&pack)
-                .unwrap()
-                .find_hash(hash.clone())
-                .unwrap();
+                .ok_or("pack_get")?
+                .find_hash(hash)
+                .ok_or("hash_clone")?;
 
             // Process the data
             let mut dec = crypto::decrypt(key, &data[..])?;

@@ -66,7 +66,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
 
     pub(crate) fn append<R: Read>(
         &mut self,
-        hash: &hash::Hash,
+        hash: hash::Hash,
         key: &key::MemKey,
         reader: &mut R,
         size: u64,
@@ -77,13 +77,13 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
             self.append_small(hash, key, reader)?
         };
 
-        self.map.insert_chunk(hash, &pack_id)?;
+        self.map.insert_chunk(hash, pack_id)?;
         Ok(())
     }
 
     fn append_big<R: Read>(
         &self,
-        hash: &hash::Hash,
+        hash: hash::Hash,
         key: &key::MemKey,
         reader: &mut R,
     ) -> Result<hash::Hash, Box<dyn Error>> {
@@ -91,13 +91,13 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         // it as it is
         let mut temp_pack = {
             let pack_id = key.gen_id();
-            let multiwrite = self.remote.write_multi(Typ::Pack, &pack_id)?;
+            let multiwrite = self.remote.write_multi(Typ::Pack, pack_id)?;
             PackBuilder::new(pack_id, multiwrite)?
         };
-        let pack_id = temp_pack.id.clone();
 
-        temp_pack.append(hash.clone(), reader)?;
+        temp_pack.append(hash, reader)?;
 
+        let pack_id = temp_pack.id;
         temp_pack.finalize(key)?;
 
         Ok(pack_id)
@@ -105,7 +105,7 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
 
     fn append_small<R: Read>(
         &mut self,
-        hash: &hash::Hash,
+        hash: hash::Hash,
         key: &key::MemKey,
         reader: &mut R,
     ) -> Result<hash::Hash, Box<dyn Error>> {
@@ -119,17 +119,20 @@ impl<'a, B: Remote> ObjectStore<'a, B> {
         //  4. If below certain size go ahead and pack it up
         //  5. if above certain size just send it as its own archive to
         //     backend
-        let temp_pack = self.current_pack.get_or_insert_with(|| {
-            let pack_id = key.gen_id();
-            let multiwrite = self.remote.write_multi(Typ::Pack, &pack_id).unwrap();
-            PackBuilder::new(pack_id, multiwrite).unwrap()
-        });
-        let pack_id = temp_pack.id.clone();
+        let temp_pack = match self.current_pack.as_mut() {
+            Some(v) => v,
+            None => {
+                let pack_id = key.gen_id();
+                let multiwrite = self.remote.write_multi(Typ::Pack, pack_id)?;
+                self.current_pack
+                    .insert(PackBuilder::new(pack_id, multiwrite)?)
+            }
+        };
+        let pack_id = temp_pack.id;
 
-        if temp_pack.append(hash.clone(), reader)? {
+        if temp_pack.append(hash, reader)? {
             self.current_pack.take().ok_or("pack_take")?.finalize(key)?;
         }
-
         Ok(pack_id)
     }
 
@@ -173,7 +176,7 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
     pub(crate) fn get_content(
         &mut self,
         key: &key::MemKey,
-        hash: &hash::Hash,
+        hash: hash::Hash,
     ) -> Result<Option<Box<dyn Read>>, Box<dyn Error>> {
         // 1. map to get content -> packfile
         match self.map.find_pack(hash) {
@@ -182,10 +185,10 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
                 if !self.cache.contains_key(&pack) {
                     info!("Loading packfile: {pack:?}");
 
-                    let mut pack_read = self.remote.read(Typ::Pack, &pack)?;
+                    let mut pack_read = self.remote.read(Typ::Pack, pack)?;
                     let pack_file = PackOut::load(&mut pack_read, key)?;
 
-                    self.cache.insert(pack.clone(), pack_file);
+                    self.cache.insert(pack, pack_file);
                 }
 
                 // 3. extract content from packfile, return it
@@ -194,7 +197,7 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
                         .cache
                         .get(&pack)
                         .ok_or("get_pack")?
-                        .find_hash(hash.clone())
+                        .find_hash(hash)
                         .ok_or("hashclone")?;
                     Ok(Some(Box::new(Cursor::new(data))))
                 } else {

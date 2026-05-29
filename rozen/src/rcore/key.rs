@@ -130,10 +130,10 @@ pub struct DiskKey {
 }
 
 impl DiskKey {
-    // TODO: this can fail, support that
     pub fn to_mem_key(&self, password: &str) -> Result<MemKey, Box<dyn Error>> {
         let key = get_password_key(password, &self.salt)?;
-        let data = secretbox::open(&self.data, &self.nonce, &key).unwrap();
+        let data = secretbox::open(&self.data, &self.nonce, &key)
+            .map_err(|_| "ciphertext fails verification")?;
 
         Ok(MemKey {
             enc: secretstream::Key::from_slice(&data[0..32]).ok_or("keyerr")?,
@@ -185,17 +185,16 @@ fn get_password_key(
     password: &str,
     salt: &argon2id13::Salt,
 ) -> Result<secretbox::Key, Box<dyn Error>> {
-    let mut key = secretbox::Key([0; secretbox::KEYBYTES]);
-    {
-        let secretbox::Key(ref mut kb) = key;
+    let mut kb = [0; secretbox::KEYBYTES];
+    let _ = argon2id13::derive_key(
+        &mut kb,
+        password.as_bytes(),
+        salt,
         // TODO: user-settable ops/mem limits
-        let _ = argon2id13::derive_key(
-            kb,
-            password.as_bytes(),
-            salt,
-            argon2id13::OPSLIMIT_INTERACTIVE,
-            argon2id13::MEMLIMIT_INTERACTIVE,
-        );
-    }
-    Ok(key)
+        argon2id13::OPSLIMIT_INTERACTIVE,
+        argon2id13::MEMLIMIT_INTERACTIVE,
+    )
+    .map_err(|_| "argon2id13::derive_key returned an error from libsodium")?;
+
+    Ok(secretbox::Key(kb))
 }

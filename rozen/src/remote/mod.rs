@@ -46,10 +46,10 @@ pub trait Remote {
     fn read_filename(&mut self, typ: Typ, filename: &str) -> Result<Box<dyn Read>, Box<dyn Error>>;
 
     // Api for reading/Writing hashes to the remote
-    fn write<R: Read>(&self, typ: Typ, key: &hash::Hash, reader: R) -> Result<(), Box<dyn Error>> {
+    fn write<R: Read>(&self, typ: Typ, key: hash::Hash, reader: R) -> Result<(), Box<dyn Error>> {
         self.write_filename(typ, &hash::to_hex(key), reader)
     }
-    fn read(&mut self, typ: Typ, key: &hash::Hash) -> Result<Box<dyn Read>, Box<dyn Error>> {
+    fn read(&mut self, typ: Typ, key: hash::Hash) -> Result<Box<dyn Read>, Box<dyn Error>> {
         self.read_filename(typ, &hash::to_hex(key))
     }
 
@@ -57,7 +57,7 @@ pub trait Remote {
     // TODO: consider if finalize on a trait is better than 'flush' for our purposes
     fn write_multi_filename(&self, typ: Typ, key: &str) -> Result<Box<dyn Write>, Box<dyn Error>>;
 
-    fn write_multi(&self, typ: Typ, key: &hash::Hash) -> Result<Box<dyn Write>, Box<dyn Error>> {
+    fn write_multi(&self, typ: Typ, key: hash::Hash) -> Result<Box<dyn Write>, Box<dyn Error>> {
         self.write_multi_filename(typ, &hash::to_hex(key))
     }
 }

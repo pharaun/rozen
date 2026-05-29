@@ -1,6 +1,7 @@
 #![expect(unused_qualifications)]
 use std::io::Cursor;
 use std::io::Error;
+use std::io::ErrorKind;
 
 use crate::rcore::hash;
 use crate::rcore::hash::from_hex;
@@ -51,7 +52,12 @@ where
 
         let computed_checksum = {
             let _ = reader.seek(SeekFrom::Start(start));
-            let mut raw_data: Vec<u8> = vec![0; (end - start) as usize];
+            let mut raw_data: Vec<u8> = vec![
+                0;
+                usize::try_from(end - start).map_err(
+                    |e| Error::new(ErrorKind::InvalidData, e)
+                )?
+            ];
             reader.read_exact(&mut raw_data[..])?;
 
             let mut checksum = hash::Checksum::new();
@@ -116,7 +122,7 @@ impl<T: WriteEndian> WriteEndian for ChecksumWrapper<T> {
 #[brw(little)]
 #[derive(Debug, PartialEq)]
 pub(crate) struct Grain {
-    pub grain_id: u32,
+    pub id: u32,
     pub key: hash::Hash,
     pub part: u32,
 
@@ -211,8 +217,8 @@ impl<W: Write> StrataWriter<W> {
     ) -> Result<usize, Error> {
         let grain = ChecksumWrapper {
             inner: Grain {
-                grain_id: 1,
-                key: key.clone(),
+                id: 1,
+                key: key,
                 part,
                 data,
             },
@@ -224,8 +230,10 @@ impl<W: Write> StrataWriter<W> {
             key,
             part,
             grain_id: 1,
-            offset: offset as u32,
-            length: length as u32,
+            offset: u32::try_from(offset)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+            length: u32::try_from(length)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
         });
         Ok(length)
     }
@@ -269,7 +277,7 @@ mod serialize {
         let key = MemKey::new();
         let data = ChecksumWrapper {
             inner: Grain {
-                grain_id: 1,
+                id: 1,
                 key: key.gen_id(),
                 part: 1,
                 data: vec![0, 1, 2, 3, 4],

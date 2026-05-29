@@ -107,7 +107,7 @@ impl<R: Read, E: Engine> Read for Crypter<R, E> {
             &mut self.in_buf,
             buf,
         )
-        .map_err(|e| std::io::Error::other(e))
+        .map_err(std::io::Error::other)
     }
 }
 
