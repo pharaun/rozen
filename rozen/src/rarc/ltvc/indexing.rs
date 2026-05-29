@@ -211,7 +211,7 @@ mod serialize {
 
         // Test encode options
         let mut index = Cursor::new(Vec::new());
-        idx.write(&mut index)?;
+        idx.write(&mut index).unwrap();
 
         println!("{}", hex::encode(index.into_inner()));
 

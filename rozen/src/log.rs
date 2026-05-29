@@ -206,7 +206,7 @@ impl<W: Write> StrataWriter<W> {
     pub(crate) fn write_footer(&mut self) -> Result<usize, Error> {
         let footer = StrataFooter {
             hash: from_hex("38236e791c18434a1fad1dd6f96c4ce0d58bb69ca04d80d8e1325d7cb20476be")
-                .expect("hexal"),
+                .map_err(|e| Error::new(ErrorKind::InvalidData, e))?,
         };
 
         self.write_binrw_record(&footer)
@@ -266,9 +266,9 @@ mod serialize {
         };
 
         let mut strata = Cursor::new(Vec::new());
-        data.write(&mut strata)?;
-        strata.seek(SeekFrom::Start(0))?;
-        let header = ChecksumWrapper::<StrataHeader>::read(&mut strata)?;
+        data.write(&mut strata).unwrap();
+        strata.seek(SeekFrom::Start(0)).unwrap();
+        let header = ChecksumWrapper::<StrataHeader>::read(&mut strata).unwrap();
 
         assert_eq!(data, header);
     }
@@ -286,9 +286,9 @@ mod serialize {
         };
 
         let mut strata = Cursor::new(Vec::new());
-        data.write(&mut strata)?;
-        strata.seek(SeekFrom::Start(0))?;
-        let grain = ChecksumWrapper::<Grain>::read(&mut strata)?;
+        data.write(&mut strata).unwrap();
+        strata.seek(SeekFrom::Start(0)).unwrap();
+        let grain = ChecksumWrapper::<Grain>::read(&mut strata).unwrap();
 
         assert_eq!(data, grain);
     }

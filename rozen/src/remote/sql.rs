@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn basic_read_write() {
-        let mut back = SqlVFS::new(None);
+        let mut back = SqlVFS::new(None).unwrap();
         let key = "test-key";
 
         let data: &[u8; 9] = b"Test Data";
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn overwrite_read_write() {
-        let mut back = SqlVFS::new(None);
+        let mut back = SqlVFS::new(None).unwrap();
         let key = "test-key";
 
         let data: &[u8; 9] = b"Test Data";

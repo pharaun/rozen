@@ -233,7 +233,8 @@ impl Map {
         Ok(
             query_stmt.query_row(rs::params![hash::to_hex(chunk)], |row| {
                 let hash: String = row.get(0)?;
-                Ok(hash::from_hex(&hash).expect("don't want to deal with hex conversion error"))
+                Ok(hash::from_hex(&hash)
+                    .map_err(|e| rs::types::FromSqlError::Other(Box::new(e)))?)
             })?,
         )
     }
