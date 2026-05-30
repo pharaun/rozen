@@ -1,6 +1,5 @@
 use rusqlite as rs;
 
-use log::debug;
 use std::error::Error;
 use std::io::{Read, Seek as _, SeekFrom, Write, copy};
 use std::path::Path;
@@ -251,10 +250,10 @@ where
     R: Read,
 {
     // Load up the index db
-    debug!("Loading INDEX db");
+    println!("Loading INDEX db");
     let idx = Index::load(index, key)?.db;
     let map_file = {
-        debug!("Loading MAP db");
+        println!("Loading MAP db");
         let m = Map::load(map, key)?.db;
         let _ = m.conn.close();
         m.db_tmp

@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             tag,
             dir,
         }) => {
-            let timestamp = OffsetDateTime::from_unix_timestamp(*timestamp)?;
+            let timestamp = OffsetDateTime::parse(timestamp, &Rfc3339)?;
             let target = dir.as_path();
 
             let mut config_content = remote.read_filename(Typ::TEST, "CONFIG")?;

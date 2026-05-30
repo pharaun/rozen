@@ -141,6 +141,7 @@ impl<W: Write> LtvcIndexing<W> {
             u32::try_from(self.h_idx.len())?.write_le(&mut index)?;
             self.h_idx.write(&mut index)?;
 
+            index.set_position(0);
             let comp = Encoder::new(&mut index, 21)?;
             let mut enc = crypto::encrypt(key, comp)?;
 

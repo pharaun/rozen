@@ -1,4 +1,3 @@
-use log::info;
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::Cursor;
@@ -182,7 +181,7 @@ impl<'a, B: Remote> ObjectFetch<'a, B> {
             Ok(pack) => {
                 // 2. pack_cache to get packfile
                 if !self.cache.contains_key(&pack) {
-                    info!("Loading packfile: {pack:?}");
+                    println!("Loading packfile: {pack:?}");
 
                     let mut pack_read = self.remote.read(Typ::Pack, pack)?;
                     let pack_file = PackOut::load(&mut pack_read, key)?;

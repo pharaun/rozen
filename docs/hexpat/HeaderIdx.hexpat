@@ -1,3 +1,4 @@
+#include <std/mem.pat>
 import type.leb128;
 
 struct HeaderIdx {

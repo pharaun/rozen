@@ -23,7 +23,7 @@ ignore = "0.4"
 tempfile = "3"
 
 # Time library
-time = { version = "0.3", features = ["formatting"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 
 # Configuration
 toml = "1.1"

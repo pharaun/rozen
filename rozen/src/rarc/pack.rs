@@ -1,5 +1,4 @@
 use binrw::BinRead as _;
-use log::debug;
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{Cursor, Read, Write, copy};
@@ -72,7 +71,7 @@ impl PackOut {
         for EdatStream { header, mut data } in ltvc {
             match header {
                 Header::Fhdr { hash } => {
-                    debug!("FHDR - EDAT");
+                    println!("FHDR - EDAT");
 
                     let mut out_data = vec![];
                     copy(&mut data, &mut out_data)?;
@@ -80,7 +79,7 @@ impl PackOut {
                     idx.insert(hash, out_data);
                 }
                 Header::Aidx => {
-                    debug!("AIDX - EDAT");
+                    println!("AIDX - EDAT");
                     let mut idx_buf: Vec<u8> = Vec::new();
                     let mut dec = crypto::decrypt(key, &mut data)?;
                     let mut und = Decoder::new(&mut dec)?;
@@ -97,7 +96,7 @@ impl PackOut {
                         },
                     )?;
 
-                    debug!("AIDX - EDAT - length: {}", chunk_idx.len());
+                    println!("AIDX - EDAT - length: {}", chunk_idx.len());
                 }
 
                 // Skip header we don't care for

@@ -58,13 +58,13 @@ pub(crate) enum Commands {
     /// Fetch a snapshot from remote
     Fetch {
         /// The timestamp of the snapshot
-        timestamp: i64,
-
-        /// The tag of the snapshot to fetch
-        tag: Option<String>,
+        timestamp: String,
 
         /// Directory to download snapshot files to
         dir: PathBuf,
+
+        /// The tag of the snapshot to fetch
+        tag: Option<String>,
     },
 
     /// Test the entire lifecycle
