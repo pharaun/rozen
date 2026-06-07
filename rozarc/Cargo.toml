@@ -1,0 +1,27 @@
+[package]
+name = "rozarc"
+version = "0.1.0"
+authors = ["Anja Berens <pharaun666@gmail.com>"]
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Encryption & Hashing
+blake3 = "1"
+twox-hash = "2"
+sodiumoxide = "0.2.7"
+
+# Compressing
+zstd = "0.13"
+
+# Serialization
+byteorder = "1"
+integer-encoding = "4.0.2"
+minicbor = "2.2.2"
+
+# Everything else
+log = "0.4"
+thiserror = "2"
+hex = "0.4"

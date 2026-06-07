@@ -1,5 +1,5 @@
 [package]
-name = "rozen-bin"
+name = "rozbin"
 version = "0.1.0"
 authors = ["Anja Berens <pharaun666@gmail.com>"]
 edition = "2024"

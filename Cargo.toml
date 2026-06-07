@@ -1,8 +1,9 @@
 [workspace]
 members = [
     "rozen",
-    "rozen-bin",
-    "rozen-tui",
+    "rozarc",
+    "rozbin",
+    "roztui",
 ]
 
 resolver = "2"
