@@ -20,6 +20,7 @@ zstd = "0.13"
 byteorder = "1"
 integer-encoding = "4.0.2"
 minicbor = "2.2.2"
+bitflags = "2.13.0"
 
 # Everything else
 log = "0.4"
