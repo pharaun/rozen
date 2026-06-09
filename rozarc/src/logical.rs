@@ -2,6 +2,11 @@ use bitflags::bitflags;
 use byteorder::LittleEndian as LE;
 use byteorder::WriteBytesExt as _;
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::io;
+
+use rozen::rcore::buf::fill_buf;
+
 /// High level Logical Stream design
 ///
 /// block := member_id: u32 || block_seq: u32 || flags: u8 || len: u32
@@ -12,8 +17,9 @@ use std::collections::HashMap;
 ///
 ///
 /// member_id: per-archive logical unit (file, snapshot, cdc chunk, ...)
-///     - Identity (type/hash/name) lives in footer index keyed by member_id
-///     - If id == u32::max -> stop permitting new member, trigger archive to be sealed+rolled
+///     - Identity (type?/hash) lives in footer index keyed by member_id
+///     - if id overflows u32::max trigger the archive to be sealed+rolled
+///       This permits the last member_id == u32::max
 ///     - Also this is only for additing new members, so if there's still incomplete members that's
 ///       fine, just don't admit new members to the archive.
 ///
@@ -25,7 +31,7 @@ use std::collections::HashMap;
 ///
 /// Sequencing:
 ///     - START block == (id = X, seq = 0, flag != is_last)
-///     - MIDDLE block == (id = X, seq = 1..u32::max, flag != is_last)
+///     - MIDDLE block == (id = X, seq = 1..(u32::max-1), flag != is_last)
 ///     - END block == (id = X, seq = 0..u32::max, flag = is_last)
 ///     - Single-block == (id = X, seq = 0, flag = is_last)
 ///     - Empty-block == (id = X, seq = 0, flag = is_last, len = 0)
@@ -41,11 +47,7 @@ use std::collections::HashMap;
 ///         * Finalize once all *currently-open* members are committed.
 ///         * Default writer keeps one member open at a time so usually the overshot is a single
 ///           member bounded
-///         * Also if member_id == u32::max, stop accepting new member registeration
-///     - Ask for a member_id hash/identification at finalization to permit hash compution during
-///         streaming.
-///         * Deduplication will need the hash upfront so its only a win for non-deduplication
-///           workflow such as a (WORM archive).
+///         * Also if member_id for last entry is u32::max, stop accepting new member registeration
 ///     - (id/seq) is not used in happy path but for recovery, also decided to not include hash
 ///         * Can re-generate the hash after retrieving all object, and rehash the content
 ///
@@ -62,6 +64,11 @@ use std::collections::HashMap;
 ///         * for members larger than u32 (4gb) it will take multiple blocks to represent
 ///             - this also allows a max of a 4gb "buffer" per block, can be adjusted by usecases
 ///
+/// Overhead of header block:
+/// - 16 KiB block -> 0.08% overhead (832 KiB per GiB of data)
+/// -  1 MiB block -> 0.001% overhead (13 KiB per GiB of data)
+/// -  4 MiB block -> 0.0003% overhead (3.25 KiB per GiB of data)
+///
 /// Interleaving -vs- read locality:
 /// - Format permits interleaving (id, seq) and the footer fragment list will track it
 /// - It is not encouraged, for default workload it will slurp the data in on a contingious
@@ -70,7 +77,6 @@ use std::collections::HashMap;
 ///     * The opt in might be via a per-block api where you pass in the (id, seq) pair when you
 ///         add in a new block of data, and you finalize it manually
 ///     * The default slurp a reader api will do it contiguously.
-use std::io;
 
 // Must be at least 16 KiB for !is_last blocks
 const MIN_BLOCK_SIZE: usize = 16 * 1024;
@@ -78,6 +84,7 @@ const MIN_BLOCK_SIZE: usize = 16 * 1024;
 // flag: bit0 = is_last (closes its member_id to further writes)
 //       bit1-7 Must be 0 (reserved)
 bitflags! {
+    #[derive(Copy, Clone)]
     struct BlockFlags: u8 {
         const IS_LAST = 1;
     }
@@ -90,40 +97,36 @@ pub struct LogicalBuilder<W: io::Write> {
     // To permit hitting u32::Max and signaling via None
     next_id: Option<u32>,
     index: HashMap<u32, MemberEntry>,
+    seen_hash: HashSet<Hash>,
     inner: W,
     pos_soft_cap: u64,
     pos: u64,
 }
 
-// TODO: Better define the fragment index and how it interacts
-// with the compression and encryption layers but for now just do
-// a fragment table of logical offset + length
-// TODO: probs want additional data here as well
+// TODO: Once a compression/encryption layer is developed figure out how
+// to handle the fragment table, but for now have it be logical positioning
 #[derive(Default, Debug)]
 pub struct MemberEntry {
-    // TODO: Open question of how to handle duplicate hash (shouldn't admit it)
-    pub hash: Option<Hash>,
-    // TODO: No attempt is made to deduplicate/deal with runs of blocks at the moment
-    // (logical offset + block-length)
-    pub fragment: Vec<(u64, u32)>,
+    // TODO: a type field?
+    pub hash: Hash,
+    pub is_last: bool,
+    // Fragment is a Vec to support interweaving member_ids but that is discouraged.
+    // (logical offset (incl. header), block-run-length)
+    pub fragment: Vec<(u64, u64)>,
 }
 
 // NOTE: clone/copy not permitted to enforce api invartants
 pub struct MemberHandle {
     id: u32,
-    next_seq: Option<u32>,
+    next_seq: u32,
 }
 
-// TODO: Convience methods:
-// - write_reader(&mut MemberHandle, R: Read) -> IoResult<?>
-//
-// Note:
-// * Do we want to permit a one shot member api that creates, write, hash, finalize a member?
 impl<W: io::Write> LogicalBuilder<W> {
     pub fn new(writer: W, soft_cap: u64) -> Self {
         Self {
             next_id: Some(0),
             index: HashMap::new(),
+            seen_hash: HashSet::new(),
             inner: writer,
             pos_soft_cap: soft_cap,
             pos: 0,
@@ -134,28 +137,12 @@ impl<W: io::Write> LogicalBuilder<W> {
         self.inner
     }
 
-    // TODO: replace Io errors with our own
-    // TODO: If we want to uphold that no duplicate hash can exist,
-    // may need to requiree up-front hash in create_member
-    pub fn create_member(&mut self) -> io::Result<MemberHandle> {
-        // Abort if:
-        //  - next_id == None (member_id exhaustion)
-        //  - pos >= pos_soft_cap (soft cap on archive max size)
-        if self.pos >= self.pos_soft_cap {
-            Err(io::Error::other("Logical Soft Cap hit"))
-        } else {
-            match self.next_id {
-                None => Err(io::Error::other("Logical member_id exhaustion")),
-                Some(next_id) => {
-                    // Check if it is u32::MAX and if so, set it to None to signal exhaustion.
-                    self.next_id = next_id.checked_add(1);
-                    Ok(MemberHandle {
-                        id: next_id,
-                        next_seq: Some(0),
-                    })
-                }
-            }
-        }
+    fn add_fragment(&mut self, member_id: u32, offset: u64, len: u32, is_last: bool) {
+        // TODO: handle consolodating fragments, but for now just insert it all as it is
+        // TODO: No attempt is made to deduplicate/deal with runs of blocks at the moment
+        let entry = self.index.entry(member_id).or_default();
+        entry.is_last = is_last;
+        entry.fragment.push((offset, len.into()))
     }
 
     fn write_block_header(
@@ -182,7 +169,7 @@ impl<W: io::Write> LogicalBuilder<W> {
         block_seq: u32,
         flags: BlockFlags,
         buf: &[u8],
-    ) -> io::Result<usize> {
+    ) -> io::Result<()> {
         // Check if the buf is at least 16KiB to uphold the u32 seq + u32 length invarant
         // However if flag is set to IS_LAST permit less than 16KiB write
         // Additionally check that the buf is not larger than can be held in u32 length
@@ -206,63 +193,108 @@ impl<W: io::Write> LogicalBuilder<W> {
             self.inner.write_all(buf)?;
             self.pos += buf.len() as u64;
 
-            // TODO: figure out how to handle this correctly, the issue is, we can write up
-            // to u32 "max" which on u32 and u16 pointer platform is fine, but then that
-            // means we can't return the true length of data written cuz header is 13 bytes
-            // on top of that.... How do we handle this case?
-            Ok((self.pos - old_pos) as usize)
+            // Update the fragment table
+            self.add_fragment(
+                member_id,
+                old_pos,
+                buf.len() as u32,
+                flags.contains(BlockFlags::IS_LAST),
+            );
+
+            Ok(())
         }
     }
 
-    fn update_index(&mut self, member_id: u32, offset: u64, len: u32, hash: Option<Hash>) {
-        // Fetch and update the entry
-        // TODO: handle consolodating fragments, but for now just insert it all as it is
-        let entry = self.index.entry(member_id).or_default();
-        entry.hash = hash;
-        entry.fragment.push((offset, len))
-    }
+    // TODO: replace Io errors with our own
+    pub fn create_member(&mut self, hash: Hash) -> io::Result<MemberHandle> {
+        // Abort if:
+        //  - next_id == None (member_id exhaustion)
+        //  - pos >= pos_soft_cap (soft cap on archive max size)
+        //  - hash in index already
+        if self.pos >= self.pos_soft_cap {
+            Err(io::Error::other("Logical Soft Cap hit"))
+        } else if self.seen_hash.contains(&hash) {
+            Err(io::Error::other("Duplicate hash given"))
+        } else {
+            match self.next_id {
+                None => Err(io::Error::other("Logical member_id exhaustion")),
+                Some(next_id) => {
+                    // Check if it is u32::MAX and if so, set it to None to signal exhaustion.
+                    self.next_id = next_id.checked_add(1);
+                    // We add it to the seen_hash since its attached to the handle now and
+                    // initalize an initial fragment table entry
+                    self.seen_hash.insert(hash);
+                    self.index.insert(
+                        next_id,
+                        MemberEntry {
+                            hash,
+                            is_last: false,
+                            fragment: vec![],
+                        },
+                    );
 
-    pub fn write_block(&mut self, handle: &mut MemberHandle, buf: &[u8]) -> io::Result<usize> {
-        match handle.next_seq {
-            None => Err(io::Error::other("Member seq counter exhaustion")),
-            Some(next_seq) => {
-                // Check if it is u32::MAX and if so, set it to None to signal exhaustion.
-                handle.next_seq = next_seq.checked_add(1);
-
-                let old_pos = self.pos;
-                let len = self.write_block_data(handle.id, next_seq, !BlockFlags::IS_LAST, buf)?;
-                // TODO: handle usize/u32 nonsense
-                self.update_index(handle.id, old_pos, len as u32, None);
-                Ok(len)
+                    Ok(MemberHandle {
+                        id: next_id,
+                        next_seq: 0,
+                    })
+                }
             }
         }
     }
 
-    // TODO: Unsure if want to permit a 0 length final write if seq != 0, let's go with error here
-    // but if seq = 0, permit a zero block write, actually do we even want to permit a zero block
-    // write at all? might have that be handled at metadata layer above
-    // TODO: How to handle duplicate hash?
-    pub fn finish_member(
+    pub fn write_block(&mut self, handle: &mut MemberHandle, buf: &[u8]) -> io::Result<()> {
+        // Check if the next seq will be u32::MAX and if so, reject this write to guard
+        // against coding yourself into a corner, force consumer to then use finish_member
+        // to use the last seq.
+        match handle.next_seq.checked_add(1) {
+            None => Err(io::Error::other(
+                "Member seq is at u32::MAX must use finish_member",
+            )),
+            Some(next_seq) => {
+                let curr_seq = handle.next_seq;
+                handle.next_seq = next_seq;
+
+                self.write_block_data(handle.id, curr_seq, !BlockFlags::IS_LAST, buf)
+            }
+        }
+    }
+
+    pub fn finish_member(&mut self, handle: MemberHandle, buf: &[u8]) -> io::Result<()> {
+        self.write_block_data(handle.id, handle.next_seq, BlockFlags::IS_LAST, buf)
+    }
+
+    pub fn write_reader(
         &mut self,
-        handle: MemberHandle,
-        buf: &[u8],
-        hash: Hash,
-    ) -> io::Result<usize> {
-        match handle.next_seq {
-            // If its exhausted its too late to handle it here
-            None => Err(io::Error::other("Member seq counter exhaustion")),
-            Some(next_seq) => {
-                let old_pos = self.pos;
-                let len = self.write_block_data(handle.id, next_seq, BlockFlags::IS_LAST, buf)?;
-                // TODO: handle usize/u32 nonsense
-                self.update_index(handle.id, old_pos, len as u32, Some(hash));
-                Ok(len)
+        mut handle: MemberHandle,
+        mut reader: impl io::Read,
+        chunk: usize,
+    ) -> io::Result<()> {
+        // Check that chunk is greater than MIN_BLOCK_SIZE (16 KiB permits 50 TB single member archive)
+        if chunk < MIN_BLOCK_SIZE {
+            // TODO: do we want to permit api users to pick a suboptimal block size here?
+            Err(io::Error::other(format!(
+                "Must be at least {MIN_BLOCK_SIZE} the chunk is: {chunk}"
+            )))
+        } else {
+            // NOTE: I feel like this implement isn't very good, tweak it till its better, like
+            // can we take advantage of the eof flag from fill_buf?
+            let mut curr = vec![0; chunk];
+            let mut next = vec![0; chunk];
+
+            let (_, mut curr_len) = fill_buf(&mut reader, &mut curr)?;
+            loop {
+                let (_, next_len) = fill_buf(&mut reader, &mut next)?;
+
+                if next_len == 0 {
+                    return self.finish_member(handle, &curr[..curr_len]);
+                }
+                self.write_block(&mut handle, &curr[..curr_len])?;
+                std::mem::swap(&mut curr, &mut next);
+                curr_len = next_len;
             }
         }
     }
 
-    // TODO: do we want a flag on the MemberEntry to flag it as finalized when it is or is
-    // the presentence of Hash sufficient or not?
     // TODO: how to check for recoverable error, with this design right now any unfinalized
     // member -> hard error
     pub fn finish(self) -> io::Result<(W, HashMap<u32, MemberEntry>)> {
@@ -270,12 +302,14 @@ impl<W: io::Write> LogicalBuilder<W> {
         // we handle it here for let it be forwarded?
         let mut bad_member = vec![];
         for (key, member) in self.index.iter() {
-            if member.hash.is_none() {
+            if !member.is_last {
                 bad_member.push(key);
             }
         }
 
         if bad_member.is_empty() {
+            // TODO: Spec gap: Don't know how to handle the fragment offset/index yet, for now use
+            // logical offset/length. This code will need updating once we know
             Ok((self.inner, self.index))
         } else {
             Err(io::Error::other(format!(

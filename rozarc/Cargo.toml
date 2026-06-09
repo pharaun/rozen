@@ -8,6 +8,8 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+rozen = { path = "../rozen" }
+
 # Encryption & Hashing
 blake3 = "1"
 twox-hash = "2"
