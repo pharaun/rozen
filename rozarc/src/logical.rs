@@ -138,11 +138,13 @@ impl<W: io::Write> LogicalBuilder<W> {
     }
 
     fn add_fragment(&mut self, member_id: u32, offset: u64, len: u32, is_last: bool) {
-        // TODO: handle consolodating fragments, but for now just insert it all as it is
-        // TODO: No attempt is made to deduplicate/deal with runs of blocks at the moment
         let entry = self.index.entry(member_id).or_default();
         entry.is_last = is_last;
-        entry.fragment.push((offset, len.into()))
+
+        match entry.fragment.pop_if(|(p_off, p_len)| (*p_off + *p_len) == offset) {
+            None => entry.fragment.push((offset, len.into())),
+            Some((p_off, p_len)) => entry.fragment.push((p_off, p_len + (len as u64))),
+        }
     }
 
     fn write_block_header(
