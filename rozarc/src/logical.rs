@@ -223,7 +223,7 @@ impl<W: io::Write> LogicalBuilder<W> {
         match handle.next_seq.checked_add(1) {
             None => Err(LogicalError::MemberSeqCap),
             Some(next_seq) => {
-                check_buffer_invariant(BlockFlags::empty(), buf)?;
+                check_buffer_invariant(BlockFlags::empty(), buf.len())?;
 
                 let curr_seq = handle.next_seq;
                 handle.next_seq = next_seq;
@@ -250,7 +250,7 @@ impl<W: io::Write> LogicalBuilder<W> {
         if buf.is_empty() && handle.next_seq != 0 {
             Err(LogicalError::MemberSeqNotZeroForEmptyBlock(handle.next_seq))
         } else {
-            check_buffer_invariant(BlockFlags::IS_LAST, buf)?;
+            check_buffer_invariant(BlockFlags::IS_LAST, buf.len())?;
 
             let old_pos = self.pos;
             self.pos += write_block_header(
@@ -331,16 +331,25 @@ impl<W: io::Write> LogicalBuilder<W> {
     }
 }
 
-fn check_buffer_invariant(flags: BlockFlags, buf: &[u8]) -> LResult<()> {
+fn check_buffer_invariant(flags: BlockFlags, buf_len: usize) -> LResult<()> {
     // Check if the buf is at least 16KiB to uphold the u32 seq + u32 length invarant
     // However if flag is set to IS_LAST permit less than 16KiB write
     // Additionally check that the buf is not larger than can be held in u32 length
-    if !flags.contains(BlockFlags::IS_LAST) && (buf.len() < MIN_BLOCK_SIZE) {
-        Err(LogicalError::BelowMinBlockSize(buf.len()))
-    } else if !buf_len_u32_check(buf.len()) {
-        Err(LogicalError::AboveMaxBlockSize(buf.len()))
+    if !flags.contains(BlockFlags::IS_LAST) && (buf_len < MIN_BLOCK_SIZE) {
+        Err(LogicalError::BelowMinBlockSize(buf_len))
+    } else if !buf_len_u32_check(buf_len) {
+        Err(LogicalError::AboveMaxBlockSize(buf_len))
     } else {
         Ok(())
+    }
+}
+
+fn buf_len_u32_check(len: usize) -> bool {
+    if usize::BITS <= 32 {
+        // on 16/32 anything fits in u32
+        true
+    } else {
+        u32::try_from(len).is_ok()
     }
 }
 
@@ -363,19 +372,24 @@ fn write_block_header(
     Ok(13)
 }
 
-fn buf_len_u32_check(len: usize) -> bool {
-    if usize::BITS <= 32 {
-        // on 16/32 anything fits in u32
-        true
-    } else {
-        u32::try_from(len).is_ok()
-    }
-}
-
 #[cfg(test)]
 mod test_logical {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn check_buffer_invariant_at_u32() {
+        check_buffer_invariant(BlockFlags::empty(), u32::MAX as usize).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")] // for <= 32-bit +1 overflows
+    fn check_buffer_invariant_rejects_over_u32() {
+        let res = check_buffer_invariant(BlockFlags::empty(), u32::MAX as usize + 1);
+        assert!(
+            matches!(res, Err(LogicalError::AboveMaxBlockSize(a)) if a == (u32::MAX as usize + 1))
+        );
+    }
 
     #[test]
     fn empty_logical() {
