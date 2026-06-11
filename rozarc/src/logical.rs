@@ -92,6 +92,8 @@ pub enum LogicalError {
     BelowMinBlockSize(usize),
     #[error("Must be less than u32::MAX. Is: {0}")]
     AboveMaxBlockSize(usize),
+    #[error("Chunk must be at least {MIN_BLOCK_SIZE}. Is: {0}")]
+    ChunkBelowMinBlockSize(usize),
     #[error("Soft cap hit. Cap is: {0}, Currently is: {1}")]
     SoftCap(u64, u64),
     #[error("Logical memeber_id exhaustion.")]
@@ -102,6 +104,8 @@ pub enum LogicalError {
     DuplicateHash,
     #[error("Member block_seq is {0}, yet finish_member invoked with a empty buffer")]
     MemberSeqNotZeroForEmptyBlock(u32),
+    #[error("Must be used with a fresh handle")]
+    MemberHandleAlreadyUsed,
 }
 
 type LResult<T> = Result<T, LogicalError>;
@@ -115,9 +119,13 @@ bitflags! {
     }
 }
 
+// TODO: this doesn't support parallel writers yet due to having &mut self
+// on most api calls, fix this
 pub struct LogicalBuilder<W: io::Write> {
     // To permit hitting u32::Max and signaling via None
     next_id: Option<u32>,
+    // TODO: improve this, since we store the hash twice (in seen_hash, and the HashMap's
+    // MemberEntry).
     index: HashMap<u32, MemberEntry>,
     seen_hash: HashSet<Hash>,
     inner: W,
@@ -156,12 +164,11 @@ impl<W: io::Write> LogicalBuilder<W> {
         }
     }
 
-    pub fn into_inner(self) -> W {
-        self.inner
-    }
-
     fn add_fragment(&mut self, member_id: u32, offset: u64, len: u64, flags: BlockFlags) {
-        let entry = self.index.entry(member_id).or_default();
+        let entry = self
+            .index
+            .get_mut(&member_id)
+            .expect("create_member should always create a valid index entry");
         entry.is_last = flags.contains(BlockFlags::IS_LAST);
 
         match entry
@@ -216,6 +223,8 @@ impl<W: io::Write> LogicalBuilder<W> {
         match handle.next_seq.checked_add(1) {
             None => Err(LogicalError::MemberSeqCap),
             Some(next_seq) => {
+                check_buffer_invariant(BlockFlags::empty(), buf)?;
+
                 let curr_seq = handle.next_seq;
                 handle.next_seq = next_seq;
 
@@ -224,11 +233,13 @@ impl<W: io::Write> LogicalBuilder<W> {
                     &mut self.inner,
                     handle.id,
                     curr_seq,
-                    !BlockFlags::IS_LAST,
+                    BlockFlags::empty(),
                     buf.len(),
                 )?;
-                self.pos += write_block_data(&mut self.inner, !BlockFlags::IS_LAST, buf)?;
-                self.add_fragment(handle.id, old_pos, self.pos - old_pos, !BlockFlags::IS_LAST);
+                self.inner.write_all(buf)?;
+                self.pos += buf.len() as u64;
+
+                self.add_fragment(handle.id, old_pos, self.pos - old_pos, BlockFlags::empty());
                 Ok(())
             }
         }
@@ -239,6 +250,8 @@ impl<W: io::Write> LogicalBuilder<W> {
         if buf.is_empty() && handle.next_seq != 0 {
             Err(LogicalError::MemberSeqNotZeroForEmptyBlock(handle.next_seq))
         } else {
+            check_buffer_invariant(BlockFlags::IS_LAST, buf)?;
+
             let old_pos = self.pos;
             self.pos += write_block_header(
                 &mut self.inner,
@@ -247,7 +260,9 @@ impl<W: io::Write> LogicalBuilder<W> {
                 BlockFlags::IS_LAST,
                 buf.len(),
             )?;
-            self.pos += write_block_data(&mut self.inner, BlockFlags::IS_LAST, buf)?;
+            self.inner.write_all(buf)?;
+            self.pos += buf.len() as u64;
+
             self.add_fragment(handle.id, old_pos, self.pos - old_pos, BlockFlags::IS_LAST);
             Ok(())
         }
@@ -262,7 +277,12 @@ impl<W: io::Write> LogicalBuilder<W> {
         // Check that chunk is greater than MIN_BLOCK_SIZE (16 KiB permits 50 TB single member archive)
         if chunk < MIN_BLOCK_SIZE {
             // TODO: do we want to permit api users to pick a suboptimal block size here?
-            Err(LogicalError::BelowMinBlockSize(chunk))
+            Err(LogicalError::ChunkBelowMinBlockSize(chunk))
+        } else if handle.next_seq != 0 {
+            // Must use a fresh handle for this convience method to uphold invariants.
+            // - Specifically if its non-zero + is given a empty reader it fails with a
+            //   MemberSeqNotZeroForEmptyBlock error from the finish_member function.
+            Err(LogicalError::MemberHandleAlreadyUsed)
         } else {
             // NOTE: I feel like this implement isn't very good, tweak it till its better, like
             // can we take advantage of the eof flag from fill_buf?
@@ -285,9 +305,12 @@ impl<W: io::Write> LogicalBuilder<W> {
 
     // TODO: how to check for recoverable error, with this design right now any unfinalized
     // member -> hard error
-    pub fn finish(self) -> LResult<(W, HashMap<u32, MemberEntry>)> {
-        // TODO: need to check how to handle flush/recheck the flush logic here again on if
-        // we handle it here for let it be forwarded?
+    // TODO: make this flush, or document that the client needs to manually flush
+    // TODO: Also look into sorting/ordering this map so that its determistic (or make client do
+    // that before serialization)
+    // TODO: Right now we are just returning the MemberEntry that is also used for internal
+    // bookkeeping, either clean this up or track it in a different way
+    pub fn finish(self) -> LResult<(W, u64, HashMap<u32, MemberEntry>)> {
         let mut bad_member = vec![];
         for (key, member) in &self.index {
             if !member.is_last {
@@ -298,13 +321,26 @@ impl<W: io::Write> LogicalBuilder<W> {
         if bad_member.is_empty() {
             // TODO: Spec gap: Don't know how to handle the fragment offset/index yet, for now use
             // logical offset/length. This code will need updating once we know
-            Ok((self.inner, self.index))
+            Ok((self.inner, self.pos, self.index))
         } else {
             Err(io::Error::other(format!(
                 "Tried to finish this logical builder with still open members: {bad_member:?}"
             ))
             .into())
         }
+    }
+}
+
+fn check_buffer_invariant(flags: BlockFlags, buf: &[u8]) -> LResult<()> {
+    // Check if the buf is at least 16KiB to uphold the u32 seq + u32 length invarant
+    // However if flag is set to IS_LAST permit less than 16KiB write
+    // Additionally check that the buf is not larger than can be held in u32 length
+    if !flags.contains(BlockFlags::IS_LAST) && (buf.len() < MIN_BLOCK_SIZE) {
+        Err(LogicalError::BelowMinBlockSize(buf.len()))
+    } else if !buf_len_u32_check(buf.len()) {
+        Err(LogicalError::AboveMaxBlockSize(buf.len()))
+    } else {
+        Ok(())
     }
 }
 
@@ -327,20 +363,6 @@ fn write_block_header(
     Ok(13)
 }
 
-fn write_block_data(mut writer: impl io::Write, flags: BlockFlags, buf: &[u8]) -> LResult<u64> {
-    // Check if the buf is at least 16KiB to uphold the u32 seq + u32 length invarant
-    // However if flag is set to IS_LAST permit less than 16KiB write
-    // Additionally check that the buf is not larger than can be held in u32 length
-    if !flags.contains(BlockFlags::IS_LAST) && (buf.len() < MIN_BLOCK_SIZE) {
-        Err(LogicalError::BelowMinBlockSize(buf.len()))
-    } else if !buf_len_u32_check(buf.len()) {
-        Err(LogicalError::AboveMaxBlockSize(buf.len()))
-    } else {
-        writer.write_all(buf)?;
-        Ok(buf.len() as u64)
-    }
-}
-
 fn buf_len_u32_check(len: usize) -> bool {
     if usize::BITS <= 32 {
         // on 16/32 anything fits in u32
@@ -357,49 +379,65 @@ mod test_logical {
 
     #[test]
     fn empty_logical() {
-        let log = LogicalBuilder::new(vec![], u64::MAX);
-        let (out, idx) = log.finish().unwrap();
+        let mut output = vec![];
+        let log = LogicalBuilder::new(&mut output, u64::MAX);
+        let (out, len, idx) = log.finish().unwrap();
 
         assert!(out.is_empty());
+        assert_eq!(len, 0);
         assert!(idx.is_empty());
+        assert!(output.is_empty());
     }
 
     #[test]
     fn create_member() {
-        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
         let handle = log.create_member([0; 32]).unwrap();
 
         assert_eq!(handle.id, 0);
         assert_eq!(handle.next_seq, 0);
+        assert!(output.is_empty());
     }
 
     #[test]
     fn create_duplicate_member() {
-        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
         log.create_member([0; 32]).unwrap();
         let handle = log.create_member([0; 32]);
 
         assert!(matches!(handle, Err(LogicalError::DuplicateHash)));
+        assert!(output.is_empty());
     }
 
     #[test]
     fn create_member_id_exhaustion() {
-        let mut log = LogicalBuilder::new(vec![], u64::MAX);
-        log.next_id = None;
-        let handle = log.create_member([0; 32]);
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
+
+        log.next_id = Some(u32::MAX);
+        log.create_member([0; 32]).unwrap();
+
+        assert!(log.next_id.is_none());
+
+        let handle = log.create_member([1; 32]);
 
         assert!(matches!(handle, Err(LogicalError::MemberIdCap)));
+        assert!(output.is_empty());
     }
 
     #[test]
     fn create_member_soft_cap() {
-        let mut log = LogicalBuilder::new(vec![], u16::MAX.into());
-        log.pos = u32::MAX.into();
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u16::MAX.into());
+        log.pos = u16::MAX.into();
         let handle = log.create_member([0; 32]);
 
         assert!(
-            matches!(handle, Err(LogicalError::SoftCap(a, b)) if a == u16::MAX.into() && b == u32::MAX.into())
+            matches!(handle, Err(LogicalError::SoftCap(a, b)) if a == u16::MAX.into() && b == u16::MAX.into())
         );
+        assert!(output.is_empty());
     }
 
     #[test]
@@ -411,7 +449,7 @@ mod test_logical {
 
         log.finish_member(handle, &vec![]).unwrap();
 
-        let (out, idx) = log.finish().unwrap();
+        let (out, len, idx) = log.finish().unwrap();
 
         // Header (Little Endian)
         let expect = vec![
@@ -421,6 +459,7 @@ mod test_logical {
             0, 0, 0, 0, // Len == 0 (its empty data)
         ];
         assert_eq!(out, expect);
+        assert_eq!(len, 13); // Header
 
         // Idx
         let expect = HashMap::from([(
@@ -436,12 +475,32 @@ mod test_logical {
 
     #[test]
     fn finish_nonzero_block_seq_empty_member() {
-        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
         let mut handle = log.create_member([0; 32]).unwrap();
         handle.next_seq = 32_767;
 
         let res = log.finish_member(handle, &vec![]);
         assert!(matches!(res, Err(LogicalError::MemberSeqNotZeroForEmptyBlock(a)) if a == 32_767));
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn finish_member_last_seq() {
+        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let mut handle = log.create_member([0; 32]).unwrap();
+        handle.next_seq = u32::MAX;
+
+        let data = vec![0; 32 * 1024];
+        log.finish_member(handle, &data).unwrap();
+
+        let (out, len, _) = log.finish().unwrap();
+
+        let mut expect = vec![];
+        write_block_header(&mut expect, 0, u32::MAX, BlockFlags::IS_LAST, data.len()).unwrap();
+        expect.extend(data);
+        assert_eq!(out, expect);
+        assert_ne!(len, 0);
     }
 
     #[test]
@@ -457,7 +516,7 @@ mod test_logical {
         let data = vec![1, 2, 3, 4];
         log.finish_member(handle, &data).unwrap();
 
-        let (out, idx) = log.finish().unwrap();
+        let (out, _, idx) = log.finish().unwrap();
 
         // Header + data
         let mut expect = vec![];
@@ -482,17 +541,17 @@ mod test_logical {
         let mut log = LogicalBuilder::new(vec![], u64::MAX);
         let mut handle = log.create_member([0; 32]).unwrap();
 
-        let data1 = vec![1; 32 * 1024];
+        let data1 = vec![1; MIN_BLOCK_SIZE];
         log.write_block(&mut handle, &data1).unwrap();
 
         let data2 = vec![5, 6, 7, 8];
         log.finish_member(handle, &data2).unwrap();
 
-        let (out, idx) = log.finish().unwrap();
+        let (out, _, idx) = log.finish().unwrap();
 
         // Header + data
         let mut expect = vec![];
-        write_block_header(&mut expect, 0, 0, !BlockFlags::IS_LAST, data1.len()).unwrap();
+        write_block_header(&mut expect, 0, 0, BlockFlags::empty(), data1.len()).unwrap();
         expect.extend(data1);
         write_block_header(&mut expect, 0, 1, BlockFlags::IS_LAST, data2.len()).unwrap();
         expect.extend(data2);
@@ -504,7 +563,7 @@ mod test_logical {
             0,
             MemberEntry {
                 hash: [0; 32],
-                fragment: vec![(0, 13 + (32 * 1024) + 13 + 4)],
+                fragment: vec![(0, 13 + (16 * 1024) + 13 + 4)],
                 is_last: true,
             },
         )]);
@@ -515,22 +574,22 @@ mod test_logical {
     fn write_block_interweave_finish() {
         let mut log = LogicalBuilder::new(vec![], u64::MAX);
         let mut handle1 = log.create_member([0; 32]).unwrap();
-        let handle2 = log.create_member([1; 32]).unwrap();
 
         let data11 = vec![1; 32 * 1024];
         log.write_block(&mut handle1, &data11).unwrap();
 
+        let handle2 = log.create_member([1; 32]).unwrap();
         let data21 = vec![9, 10, 11, 12];
         log.finish_member(handle2, &data21).unwrap();
 
         let data12 = vec![5, 6, 7, 8];
         log.finish_member(handle1, &data12).unwrap();
 
-        let (out, idx) = log.finish().unwrap();
+        let (out, _, idx) = log.finish().unwrap();
 
         // Header + data
         let mut expect = vec![];
-        write_block_header(&mut expect, 0, 0, !BlockFlags::IS_LAST, data11.len()).unwrap();
+        write_block_header(&mut expect, 0, 0, BlockFlags::empty(), data11.len()).unwrap();
         expect.extend(data11);
         write_block_header(&mut expect, 1, 0, BlockFlags::IS_LAST, data21.len()).unwrap();
         expect.extend(data21);
@@ -563,29 +622,35 @@ mod test_logical {
 
     #[test]
     fn write_block_last_seq() {
-        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
         let mut handle = log.create_member([0; 32]).unwrap();
         handle.next_seq = u32::MAX;
 
         let res = log.write_block(&mut handle, &vec![0; 32 * 1024]);
         assert!(matches!(res, Err(LogicalError::MemberSeqCap)));
+        assert!(output.is_empty());
     }
 
     #[test]
     fn write_too_small_block() {
-        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
         let mut handle = log.create_member([0; 32]).unwrap();
 
         let data1 = vec![1, 2, 3, 4];
         let res = log.write_block(&mut handle, &data1);
         assert!(matches!(res, Err(LogicalError::BelowMinBlockSize(a)) if a == 4));
+        assert!(output.is_empty());
     }
 
     #[test]
     fn finish_unfinished_member() {
-        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
         let mut handle = log.create_member([0; 32]).unwrap();
-        log.write_block(&mut handle, &vec![0; 32 * 1024]).unwrap();
+        let data = vec![0; 32 * 1024];
+        log.write_block(&mut handle, &data).unwrap();
 
         // TODO: better define and handle various error types but for now
         // just make sure we throw an io error when the user forget to finish
@@ -595,11 +660,19 @@ mod test_logical {
             Err(LogicalError::IO(e)) => assert!(matches!(e.kind(), io::ErrorKind::Other)),
             _ => unreachable!(),
         }
+
+        // There *will* be data, assert what we've already written and nothing more, would
+        // be ideal if there was not, but can't guard exactly against this.
+        let mut expect = vec![];
+        write_block_header(&mut expect, 0, 0, BlockFlags::empty(), data.len()).unwrap();
+        expect.extend(data);
+        assert_eq!(output, expect);
     }
 
     #[test]
     fn write_reader_below_min_block_size() {
-        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
         let handle = log.create_member([0; 32]).unwrap();
 
         let res = log.write_reader(
@@ -607,7 +680,24 @@ mod test_logical {
             Cursor::new(vec![1; MIN_BLOCK_SIZE]),
             MIN_BLOCK_SIZE - 1,
         );
-        assert!(matches!(res, Err(LogicalError::BelowMinBlockSize(a)) if a == MIN_BLOCK_SIZE - 1));
+        assert!(
+            matches!(res, Err(LogicalError::ChunkBelowMinBlockSize(a)) if a == MIN_BLOCK_SIZE - 1)
+        );
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn write_reader_dirty_handle() {
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
+        let mut handle = log.create_member([0; 32]).unwrap();
+
+        // Simulate an used handle
+        handle.next_seq = 10;
+
+        let res = log.write_reader(handle, Cursor::new(vec![1; MIN_BLOCK_SIZE]), MIN_BLOCK_SIZE);
+        assert!(matches!(res, Err(LogicalError::MemberHandleAlreadyUsed)));
+        assert!(output.is_empty());
     }
 
     #[test]
@@ -617,7 +707,7 @@ mod test_logical {
         log.write_reader(handle, Cursor::new(vec![]), MIN_BLOCK_SIZE)
             .unwrap();
 
-        let (out, _) = log.finish().unwrap();
+        let (out, _, _) = log.finish().unwrap();
 
         // Header + data
         let mut expect = vec![];
@@ -634,12 +724,56 @@ mod test_logical {
         log.write_reader(handle, Cursor::new(data.clone()), MIN_BLOCK_SIZE)
             .unwrap();
 
-        let (out, _) = log.finish().unwrap();
+        let (out, _, _) = log.finish().unwrap();
 
         // Header + data
         let mut expect = vec![];
         write_block_header(&mut expect, 0, 0, BlockFlags::IS_LAST, MIN_BLOCK_SIZE / 2).unwrap();
         expect.extend(data);
+        assert_eq!(out, expect);
+    }
+
+    #[test]
+    fn write_reader_exact_buf_write() {
+        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let handle = log.create_member([0; 32]).unwrap();
+
+        let data = vec![1; MIN_BLOCK_SIZE];
+        log.write_reader(handle, Cursor::new(data.clone()), MIN_BLOCK_SIZE)
+            .unwrap();
+
+        let (out, _, _) = log.finish().unwrap();
+
+        // Header + data
+        let mut expect = vec![];
+        write_block_header(&mut expect, 0, 0, BlockFlags::IS_LAST, MIN_BLOCK_SIZE).unwrap();
+        expect.extend(data);
+        assert_eq!(out, expect);
+    }
+
+    #[test]
+    fn write_reader_exact_two_buf_write() {
+        let mut log = LogicalBuilder::new(vec![], u64::MAX);
+        let handle = log.create_member([0; 32]).unwrap();
+
+        let data1 = vec![1; MIN_BLOCK_SIZE];
+        let data2 = vec![2; MIN_BLOCK_SIZE];
+
+        let mut buf = vec![];
+        buf.extend(data1.clone());
+        buf.extend(data2.clone());
+
+        log.write_reader(handle, Cursor::new(buf), MIN_BLOCK_SIZE)
+            .unwrap();
+
+        let (out, _, _) = log.finish().unwrap();
+
+        // Header + data
+        let mut expect = vec![];
+        write_block_header(&mut expect, 0, 0, BlockFlags::empty(), MIN_BLOCK_SIZE).unwrap();
+        expect.extend(data1);
+        write_block_header(&mut expect, 0, 1, BlockFlags::IS_LAST, MIN_BLOCK_SIZE).unwrap();
+        expect.extend(data2);
         assert_eq!(out, expect);
     }
 
@@ -660,13 +794,13 @@ mod test_logical {
         log.write_reader(handle, Cursor::new(buf), MIN_BLOCK_SIZE)
             .unwrap();
 
-        let (out, _) = log.finish().unwrap();
+        let (out, _, _) = log.finish().unwrap();
 
         // Header + data
         let mut expect = vec![];
-        write_block_header(&mut expect, 0, 0, !BlockFlags::IS_LAST, MIN_BLOCK_SIZE).unwrap();
+        write_block_header(&mut expect, 0, 0, BlockFlags::empty(), MIN_BLOCK_SIZE).unwrap();
         expect.extend(data1);
-        write_block_header(&mut expect, 0, 1, !BlockFlags::IS_LAST, MIN_BLOCK_SIZE).unwrap();
+        write_block_header(&mut expect, 0, 1, BlockFlags::empty(), MIN_BLOCK_SIZE).unwrap();
         expect.extend(data2);
         write_block_header(&mut expect, 0, 2, BlockFlags::IS_LAST, MIN_BLOCK_SIZE / 2).unwrap();
         expect.extend(data3);
