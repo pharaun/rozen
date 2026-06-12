@@ -94,6 +94,8 @@ pub enum LogicalError {
     AboveMaxBlockSize(usize),
     #[error("Chunk must be at least {MIN_BLOCK_SIZE}. Is: {0}")]
     ChunkBelowMinBlockSize(usize),
+    #[error("Chunk must be less than u32::MAX. Is: {0}")]
+    ChunkAboveMaxBlockSize(usize),
     #[error("Soft cap hit. Cap is: {0}, Currently is: {1}")]
     SoftCap(u64, u64),
     #[error("Logical memeber_id exhaustion.")]
@@ -106,6 +108,8 @@ pub enum LogicalError {
     MemberSeqNotZeroForEmptyBlock(u32),
     #[error("Must be used with a fresh handle")]
     MemberHandleAlreadyUsed,
+    #[error("Member was already comitted")]
+    MemberHandleAlreadyFinished,
 }
 
 type LResult<T> = Result<T, LogicalError>;
@@ -150,6 +154,7 @@ pub struct MemberEntry {
 pub struct MemberHandle {
     id: u32,
     next_seq: u32,
+    is_finished: bool,
 }
 
 impl<W: io::Write> LogicalBuilder<W> {
@@ -210,6 +215,7 @@ impl<W: io::Write> LogicalBuilder<W> {
                     Ok(MemberHandle {
                         id: next_id,
                         next_seq: 0,
+                        is_finished: false,
                     })
                 }
             }
@@ -217,6 +223,10 @@ impl<W: io::Write> LogicalBuilder<W> {
     }
 
     pub fn write_block(&mut self, handle: &mut MemberHandle, buf: &[u8]) -> LResult<()> {
+        if handle.is_finished {
+            return Err(LogicalError::MemberHandleAlreadyFinished);
+        }
+
         // Check if the next seq will be u32::MAX and if so, reject this write to guard
         // against coding yourself into a corner, force consumer to then use finish_member
         // to use the last seq.
@@ -245,12 +255,17 @@ impl<W: io::Write> LogicalBuilder<W> {
         }
     }
 
-    #[expect(clippy::needless_pass_by_value)]
-    pub fn finish_member(&mut self, handle: MemberHandle, buf: &[u8]) -> LResult<()> {
-        if buf.is_empty() && handle.next_seq != 0 {
+    pub fn finish_member(&mut self, handle: &mut MemberHandle, buf: &[u8]) -> LResult<()> {
+        if handle.is_finished {
+            Err(LogicalError::MemberHandleAlreadyFinished)
+        } else if buf.is_empty() && handle.next_seq != 0 {
             Err(LogicalError::MemberSeqNotZeroForEmptyBlock(handle.next_seq))
         } else {
             check_buffer_invariant(BlockFlags::IS_LAST, buf.len())?;
+
+            // Since the stream is append only, any io error is non recoverable
+            // so mark the handle as finished here
+            handle.is_finished = true;
 
             let old_pos = self.pos;
             self.pos += write_block_header(
@@ -270,14 +285,16 @@ impl<W: io::Write> LogicalBuilder<W> {
 
     pub fn write_reader(
         &mut self,
-        mut handle: MemberHandle,
+        handle: &mut MemberHandle,
         mut reader: impl io::Read,
         chunk: usize,
     ) -> LResult<()> {
-        // Check that chunk is greater than MIN_BLOCK_SIZE (16 KiB permits 50 TB single member archive)
-        if chunk < MIN_BLOCK_SIZE {
-            // TODO: do we want to permit api users to pick a suboptimal block size here?
+        if handle.is_finished {
+            Err(LogicalError::MemberHandleAlreadyFinished)
+        } else if chunk < MIN_BLOCK_SIZE {
             Err(LogicalError::ChunkBelowMinBlockSize(chunk))
+        } else if !buf_len_u32_check(chunk) {
+            Err(LogicalError::ChunkAboveMaxBlockSize(chunk))
         } else if handle.next_seq != 0 {
             // Must use a fresh handle for this convience method to uphold invariants.
             // - Specifically if its non-zero + is given a empty reader it fails with a
@@ -296,7 +313,7 @@ impl<W: io::Write> LogicalBuilder<W> {
                 if next_len == 0 {
                     return self.finish_member(handle, &curr[..curr_len]);
                 }
-                self.write_block(&mut handle, &curr[..curr_len])?;
+                self.write_block(handle, &curr[..curr_len])?;
                 std::mem::swap(&mut curr, &mut next);
                 curr_len = next_len;
             }
@@ -305,7 +322,9 @@ impl<W: io::Write> LogicalBuilder<W> {
 
     // TODO: how to check for recoverable error, with this design right now any unfinalized
     // member -> hard error
-    // TODO: make this flush, or document that the client needs to manually flush
+    // TODO: make this flush, or document that the client needs to manually flush, the flush
+    // is important because of an corrupt stream, due to buffers you usually detect it on a flush
+    // so it might be better to have client handle it -> do an abort
     // TODO: Also look into sorting/ordering this map so that its determistic (or make client do
     // that before serialization)
     // TODO: Right now we are just returning the MemberEntry that is also used for internal
@@ -459,9 +478,9 @@ mod test_logical {
         let mut log = LogicalBuilder::new(vec![], u64::MAX);
         // Guard against scrambled seq/id in header
         log.next_id = Some(32_767);
-        let handle = log.create_member([0; 32]).unwrap();
+        let mut handle = log.create_member([0; 32]).unwrap();
 
-        log.finish_member(handle, &vec![]).unwrap();
+        log.finish_member(&mut handle, &vec![]).unwrap();
 
         let (out, len, idx) = log.finish().unwrap();
 
@@ -494,8 +513,23 @@ mod test_logical {
         let mut handle = log.create_member([0; 32]).unwrap();
         handle.next_seq = 32_767;
 
-        let res = log.finish_member(handle, &vec![]);
+        let res = log.finish_member(&mut handle, &vec![]);
         assert!(matches!(res, Err(LogicalError::MemberSeqNotZeroForEmptyBlock(a)) if a == 32_767));
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn finish_finished_member() {
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
+        let mut handle = log.create_member([0; 32]).unwrap();
+        handle.is_finished = true;
+
+        let res = log.finish_member(&mut handle, &vec![]);
+        assert!(matches!(
+            res,
+            Err(LogicalError::MemberHandleAlreadyFinished)
+        ));
         assert!(output.is_empty());
     }
 
@@ -506,7 +540,7 @@ mod test_logical {
         handle.next_seq = u32::MAX;
 
         let data = vec![0; 32 * 1024];
-        log.finish_member(handle, &data).unwrap();
+        log.finish_member(&mut handle, &data).unwrap();
 
         let (out, len, _) = log.finish().unwrap();
 
@@ -528,7 +562,7 @@ mod test_logical {
         handle.next_seq = 61_535;
 
         let data = vec![1, 2, 3, 4];
-        log.finish_member(handle, &data).unwrap();
+        log.finish_member(&mut handle, &data).unwrap();
 
         let (out, _, idx) = log.finish().unwrap();
 
@@ -551,6 +585,31 @@ mod test_logical {
     }
 
     #[test]
+    fn finish_member_recovery_on_error() {
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
+        let mut handle = log.create_member([0; 32]).unwrap();
+        handle.next_seq = 32_767;
+
+        let res = log.finish_member(&mut handle, &vec![]);
+
+        // Assert we got error
+        assert!(matches!(res, Err(LogicalError::MemberSeqNotZeroForEmptyBlock(a)) if a == 32_767));
+        assert_eq!(handle.next_seq, 32_767);
+
+        let data = vec![1, 2, 3, 4];
+        log.finish_member(&mut handle, &data).unwrap();
+
+        let (out, _, _) = log.finish().unwrap();
+
+        // Header + data
+        let mut expect = vec![];
+        write_block_header(&mut expect, 0, 32_767, BlockFlags::IS_LAST, data.len()).unwrap();
+        expect.extend(data);
+        assert_eq!(out, &expect);
+    }
+
+    #[test]
     fn write_block_finish() {
         let mut log = LogicalBuilder::new(vec![], u64::MAX);
         let mut handle = log.create_member([0; 32]).unwrap();
@@ -559,7 +618,7 @@ mod test_logical {
         log.write_block(&mut handle, &data1).unwrap();
 
         let data2 = vec![5, 6, 7, 8];
-        log.finish_member(handle, &data2).unwrap();
+        log.finish_member(&mut handle, &data2).unwrap();
 
         let (out, _, idx) = log.finish().unwrap();
 
@@ -592,12 +651,12 @@ mod test_logical {
         let data11 = vec![1; 32 * 1024];
         log.write_block(&mut handle1, &data11).unwrap();
 
-        let handle2 = log.create_member([1; 32]).unwrap();
+        let mut handle2 = log.create_member([1; 32]).unwrap();
         let data21 = vec![9, 10, 11, 12];
-        log.finish_member(handle2, &data21).unwrap();
+        log.finish_member(&mut handle2, &data21).unwrap();
 
         let data12 = vec![5, 6, 7, 8];
-        log.finish_member(handle1, &data12).unwrap();
+        log.finish_member(&mut handle1, &data12).unwrap();
 
         let (out, _, idx) = log.finish().unwrap();
 
@@ -659,6 +718,21 @@ mod test_logical {
     }
 
     #[test]
+    fn write_finished_block() {
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
+        let mut handle = log.create_member([0; 32]).unwrap();
+        handle.is_finished = true;
+
+        let res = log.write_block(&mut handle, &vec![]);
+        assert!(matches!(
+            res,
+            Err(LogicalError::MemberHandleAlreadyFinished)
+        ));
+        assert!(output.is_empty());
+    }
+
+    #[test]
     fn finish_unfinished_member() {
         let mut output = vec![];
         let mut log = LogicalBuilder::new(&mut output, u64::MAX);
@@ -687,15 +761,33 @@ mod test_logical {
     fn write_reader_below_min_block_size() {
         let mut output = vec![];
         let mut log = LogicalBuilder::new(&mut output, u64::MAX);
-        let handle = log.create_member([0; 32]).unwrap();
+        let mut handle = log.create_member([0; 32]).unwrap();
 
         let res = log.write_reader(
-            handle,
+            &mut handle,
             Cursor::new(vec![1; MIN_BLOCK_SIZE]),
             MIN_BLOCK_SIZE - 1,
         );
         assert!(
             matches!(res, Err(LogicalError::ChunkBelowMinBlockSize(a)) if a == MIN_BLOCK_SIZE - 1)
+        );
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")] // for <= 32-bit +1 overflows
+    fn write_reader_above_max_block_size() {
+        let mut output = vec![];
+        let mut log = LogicalBuilder::new(&mut output, u64::MAX);
+        let mut handle = log.create_member([0; 32]).unwrap();
+
+        let res = log.write_reader(
+            &mut handle,
+            Cursor::new(vec![1; MIN_BLOCK_SIZE]),
+            u32::MAX as usize + 1,
+        );
+        assert!(
+            matches!(res, Err(LogicalError::ChunkAboveMaxBlockSize(a)) if a == u32::MAX as usize + 1)
         );
         assert!(output.is_empty());
     }
@@ -709,7 +801,11 @@ mod test_logical {
         // Simulate an used handle
         handle.next_seq = 10;
 
-        let res = log.write_reader(handle, Cursor::new(vec![1; MIN_BLOCK_SIZE]), MIN_BLOCK_SIZE);
+        let res = log.write_reader(
+            &mut handle,
+            Cursor::new(vec![1; MIN_BLOCK_SIZE]),
+            MIN_BLOCK_SIZE,
+        );
         assert!(matches!(res, Err(LogicalError::MemberHandleAlreadyUsed)));
         assert!(output.is_empty());
     }
@@ -717,8 +813,8 @@ mod test_logical {
     #[test]
     fn write_reader_empty_first_write() {
         let mut log = LogicalBuilder::new(vec![], u64::MAX);
-        let handle = log.create_member([0; 32]).unwrap();
-        log.write_reader(handle, Cursor::new(vec![]), MIN_BLOCK_SIZE)
+        let mut handle = log.create_member([0; 32]).unwrap();
+        log.write_reader(&mut handle, Cursor::new(vec![]), MIN_BLOCK_SIZE)
             .unwrap();
 
         let (out, _, _) = log.finish().unwrap();
@@ -732,10 +828,10 @@ mod test_logical {
     #[test]
     fn write_reader_small_write() {
         let mut log = LogicalBuilder::new(vec![], u64::MAX);
-        let handle = log.create_member([0; 32]).unwrap();
+        let mut handle = log.create_member([0; 32]).unwrap();
 
         let data = vec![1; MIN_BLOCK_SIZE / 2];
-        log.write_reader(handle, Cursor::new(data.clone()), MIN_BLOCK_SIZE)
+        log.write_reader(&mut handle, Cursor::new(data.clone()), MIN_BLOCK_SIZE)
             .unwrap();
 
         let (out, _, _) = log.finish().unwrap();
@@ -750,10 +846,10 @@ mod test_logical {
     #[test]
     fn write_reader_exact_buf_write() {
         let mut log = LogicalBuilder::new(vec![], u64::MAX);
-        let handle = log.create_member([0; 32]).unwrap();
+        let mut handle = log.create_member([0; 32]).unwrap();
 
         let data = vec![1; MIN_BLOCK_SIZE];
-        log.write_reader(handle, Cursor::new(data.clone()), MIN_BLOCK_SIZE)
+        log.write_reader(&mut handle, Cursor::new(data.clone()), MIN_BLOCK_SIZE)
             .unwrap();
 
         let (out, _, _) = log.finish().unwrap();
@@ -768,7 +864,7 @@ mod test_logical {
     #[test]
     fn write_reader_exact_two_buf_write() {
         let mut log = LogicalBuilder::new(vec![], u64::MAX);
-        let handle = log.create_member([0; 32]).unwrap();
+        let mut handle = log.create_member([0; 32]).unwrap();
 
         let data1 = vec![1; MIN_BLOCK_SIZE];
         let data2 = vec![2; MIN_BLOCK_SIZE];
@@ -777,7 +873,7 @@ mod test_logical {
         buf.extend(data1.clone());
         buf.extend(data2.clone());
 
-        log.write_reader(handle, Cursor::new(buf), MIN_BLOCK_SIZE)
+        log.write_reader(&mut handle, Cursor::new(buf), MIN_BLOCK_SIZE)
             .unwrap();
 
         let (out, _, _) = log.finish().unwrap();
@@ -794,7 +890,7 @@ mod test_logical {
     #[test]
     fn write_reader_three_write_partial_last() {
         let mut log = LogicalBuilder::new(vec![], u64::MAX);
-        let handle = log.create_member([0; 32]).unwrap();
+        let mut handle = log.create_member([0; 32]).unwrap();
 
         let data1 = vec![1; MIN_BLOCK_SIZE];
         let data2 = vec![2; MIN_BLOCK_SIZE];
@@ -805,7 +901,7 @@ mod test_logical {
         buf.extend(data2.clone());
         buf.extend(data3.clone());
 
-        log.write_reader(handle, Cursor::new(buf), MIN_BLOCK_SIZE)
+        log.write_reader(&mut handle, Cursor::new(buf), MIN_BLOCK_SIZE)
             .unwrap();
 
         let (out, _, _) = log.finish().unwrap();
