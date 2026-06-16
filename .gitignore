@@ -11,6 +11,3 @@ Cargo.lock
 **/*.rs.bk
 
 test.sqlite
-
-/sample/
-/sample
